@@ -1,0 +1,12 @@
+// addr
+// :jumpback, addr
+PUSH3 :jumpback
+// addr, :jumpback
+SWAP1
+// ::router, addr, :jumpback
+PUSH3 ::extcodesize-router
+// addr, :jumpback
+JUMP
+:jumpback
+// size
+JUMPDEST

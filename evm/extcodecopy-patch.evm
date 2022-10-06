@@ -1,0 +1,17 @@
+// addr, dst, srcOffset, size
+// :jumpback, addr, dst, srcOffset, size
+PUSH3 :jumpback
+// size, addr, dst, srcOffset, :jumpback
+SWAP4
+// srcOffset, addr, dst, size, :jumpback
+SWAP3
+// dst, addr, srcOffset, size, :jumpback
+SWAP2
+// addr, dst, srcOffset, size, :jumpback
+SWAP1
+// ::router, addr, dst, srcOffset, size, :jumpback
+PUSH3 ::extcodecopy-router
+// addr, dst, srcOffset, size, :jumpback
+JUMP
+:jumpback
+JUMPDEST

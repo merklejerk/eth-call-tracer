@@ -1,0 +1,40 @@
+::sstore-hook
+// jumpback, slot, value
+JUMPDEST
+// value, slot, jumpback
+SWAP2
+// slot, value, jumpback
+SWAP1
+// Encode a delegatecall to handleSpySstore()
+// selector(4), slot, value, jumpback
+PUSH4 $HANDLE_SPY_SSTORE_SELECTOR
+// 224, selector(4), slot, value, jumpback
+PUSH1 224
+// selector(32), slot, value, jumpback
+SHL
+// ptr, selector, slot, value, jumpback
+PUSH2 $SCRATCH_MEM_LOC
+// slot, value, jumpback
+MSTORE
+// 0x04, slot, value, jumpback
+PUSH1 0x04
+// scratch, 0x04, slot, value, jumpback
+PUSH2 $SCRATCH_MEM_LOC
+// scratch+0x04, slot, value, jumpback
+ADD
+// value, jumpback
+MSTORE
+// 0x24, value, jumpback
+PUSH1 0x24
+// ptr, 0x24, value, jumpback
+PUSH2 $SCRATCH_MEM_LOC
+// ptr+0x24, value, jumpback
+ADD
+// jumpback
+MSTORE
+// argSize, jumpback
+PUSH1 0x44
+// ::checked-delegatecall, argSize, jumpback
+PUSH3 ::checked-delegatecall
+// argSize, jumpback
+JUMP

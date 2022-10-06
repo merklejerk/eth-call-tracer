@@ -1,0 +1,10 @@
+{
+    "compilerOptions": {
+        "outDir": "js",
+        "esModuleInterop": true,
+        "resolveJsonModule": true,
+        "sourceMap": true,
+        "downlevelIteration": true
+    },
+    "include": ["ts/**/*.ts"]
+}

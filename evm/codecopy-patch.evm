@@ -1,0 +1,13 @@
+// TODO: this is wrong, doesn't handle OOB
+// copyDst, codeOffset, size
+// codeOffset, copyDst, codeOffset, size
+DUP2
+// PREAMBLE_SIZE, codeOffset, copyDst, codeOffset, size
+PUSH2 $PREAMBLE_SIZE
+// codeOffset', copyDst, codeOffset, size
+ADD
+// codeOffset, copyDst, codeOffset', size
+SWAP2
+// copyDst, codeOffset', size
+POP
+CODECOPY

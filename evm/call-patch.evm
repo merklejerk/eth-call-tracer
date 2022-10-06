@@ -1,0 +1,12 @@
+// gas, address, value, argOffset, argSize, retOffset, retSize
+// 0 (CallType.Call), gas, address, value, argOffset, argSize, retOffset, retSize
+PUSH1 0
+// :jumpback, 0 (CallType.Call), gas, address, value, argOffset, argSize, retOffset, retSize
+PUSH3 :jumpback
+// ::call-hook, :jumpback, 0 (CallType.Call), gas, address, value, argOffset, argSize, retOffset, retSize
+PUSH3 ::call-hook
+// :jumpback, 0 (CallType.Call), gas, address, value, argOffset, argSize, retOffset, retSize
+JUMP
+// success
+:jumpback
+JUMPDEST
