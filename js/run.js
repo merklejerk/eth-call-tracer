@@ -10,12 +10,13 @@ const FlexEther = require('flex-ether');
 const RUNNER_ARTIFACT = require('../out/Runner.sol/Runner.json');
 const ORIGIN_ARTIFACT = require('../out/Runner.sol/Origin.json');
 const HOOKS_ARTIFACT = require('../out/Runner.sol/SpyHooks.json');
+const { write } = require('fs');
 
 const NULL_ADDRESS = '0x0000000000000000000000000000000000000000';
 const NULL_BYTES = '0x';
 const RUNNER_ADDRESS = '0x9000000000000000000000000000000000000001';
 const HOOKS_ADDRESS = '0x9000000000000000000000000000000000000002';
-const HANDLE_SPY_SSTOR_SELECTOR = findSelector(HOOKS_ARTIFACT, 'handleSpySstore');
+const HANDLE_SPY_SSTORE_SELECTOR = findSelector(HOOKS_ARTIFACT, 'handleSpySstore');
 
 
 require('yargs').command('$0', 'run', yargs =>
@@ -38,7 +39,7 @@ async function run(argv) {
     const eth = new FlexEther({ providerURI: rpcUrl });
     const runner = new FlexContract(
         RUNNER_ARTIFACT.abi,
-        ethjs.bufferToHex(crypto.randomBytes(20)),
+        RUNNER_ADDRESS,
         { eth },
     );
     const block = argv.block || await eth.getBlockNumber();
@@ -58,7 +59,8 @@ async function run(argv) {
             overrides: {
                 [argv.from]: { code: ORIGIN_ARTIFACT.deployedBytecode.object },
                 [runner.address]: { code: RUNNER_ARTIFACT.deployedBytecode.object },
-                [argv.to]: { code: transformBytecode(targetCode, HOOKS_ADDRESS, argv.from) }
+                [argv.to]: { code: transformBytecode(targetCode, HOOKS_ADDRESS, argv.from) },
+                [HOOKS_ADDRESS]: { code: HOOKS_ARTIFACT.deployedBytecode.object },
             },
         },
     );
@@ -122,11 +124,13 @@ const OP_ORIGIN = 0x32;
 const OP_JUMPDEST = 0x5B;
 const OP_SLOAD = 0x54;
 const OP_SSTORE = 0x55;
+const OP_ISZERO = 0x15;
 
 function splitCode(codeBuf) {
     let currBlock = [];
     const blocks = [currBlock];
-    for (let i = 0; i < codeBuf.length; ++i) {
+    let i = 0;
+    for (i = 0; i < codeBuf.length; ++i) {
         const op = codeBuf[i];
         switch (op) {
             case OP_JUMPDEST:
@@ -205,7 +209,7 @@ function writeBlock(buf, offset, block) {
 }
 
 function* iterBlockOps(block) {
-    for (const op of block) {
+    for (const [idx, op] of block.entries()) {
         if (Array.isArray(op)) {
             for (const op_ of op) {
                 yield op_;
@@ -232,9 +236,13 @@ function* iterBlocksOps(blocks) {
     }
 }
 
+function stringToBytes32(s) {
+    return ethjs.bufferToHex(ethjs.setLengthRight(Buffer.from(s), 32));
+}
+
 function transformBytecode(code, hooksAddress, origin) {
     const PREAMBLE_SIZE = 5;
-    const SCRATCH_MEM_LOC = 0x8080;
+    const SCRATCH_MEM_LOC = 0x100;
 
     // +-------------------+-------------------------+---------------+
     // | section           | description             | size (bytes)  |
@@ -250,19 +258,7 @@ function transformBytecode(code, hooksAddress, origin) {
     // | SSTORE hook code  | <-                      | TODO          |
     // +-------------------+-------------------------+---------------+
 
-    let codeBuf = ethjs.toBuffer(code);
-    {
-        const bx = splitCode(codeBuf);
-        const b = Buffer.alloc(getCodeBlockSize(bx));
-        let o = 0;
-        for (const block of bx) {
-            o += writeBlock(b, o, block);
-        }
-        console.log([ ...iterBlockOps(bx[bx.length - 1])].map(op => op.toString(16)));
-        console.log(code.slice(-64));
-        console.log(b.length, codeBuf.length, b.slice(-32), codeBuf.slice(-32));
-        console.log(codeBuf.equals(b));
-    }
+    const codeBuf = ethjs.toBuffer(code);
 
     let scratchOffset = PREAMBLE_SIZE + codeBuf.length;
     
@@ -305,24 +301,67 @@ function transformBytecode(code, hooksAddress, origin) {
 
     const jumpIRouterOffset = scratchOffset;
     const jumpIRouterBlock = [
-        // Same as jumpRouterBlock but with a JUMPI instead of JUMP at the end.
-        ...jumpRouterBlock.slice(0, -1),
+        // jumpback, loc, bool
+        OP_JUMPDEST,
+        // bool, loc, jumpback
+        OP_SWAP2,
+        // loc, bool, jumpback
+        OP_SWAP1,
+        // Copy everything between JUMPDEST and JUMP in the jump router.
+        ...jumpRouterBlock.slice(1, -1),
         OP_JUMPI,
+        // Return to jumpback if JUMPI is not triggered
+        OP_JUMP
     ];
     scratchOffset += getCodeBlockSize(jumpIRouterBlock);
 
+    const checkedDelegatecallOffset = scratchOffset;
+    const checkedDelegatecallBlock = [
+        // gas, target, argOffset, argSize, retOffset, retSize, jumpback
+        OP_JUMPDEST,
+        // success, jumpback
+        OP_DELEGATECALL,
+        // !success, jumpback
+        OP_ISZERO,
+        // PC, !success, jumpback
+        OP_PC,
+        // 46, PC, !success, jumpback
+        [OP_PUSH1, 6],
+        // jumpdest, !success, jumpback
+        OP_ADD,
+        OP_JUMPI,
+        // :successful
+        // jumpback
+        OP_JUMP,
+        OP_JUMPDEST,
+        // :failed
+        // errmsg, jumpback 
+        [OP_PUSH32, ...to32ByteArray(stringToBytes32('hook call failed'))],
+        // 0x00, errmsg, jumpback
+        [OP_PUSH1, 0x00],
+        // jumpback
+        OP_MSTORE,
+        // 0x20, jumpback
+        [OP_PUSH1, 0x20],
+        // 0x00, 0x20, jumpback
+        [OP_PUSH1, 0x00],
+        // jumpback
+        OP_REVERT,
+    ]
+    scratchOffset += getCodeBlockSize(checkedDelegatecallBlock);
+    
     const sstoreHookOffset = scratchOffset;
     const sstoreHookBlock = [
-        OP_JUMPDEST,
         // jumpback, slot, value
+        OP_JUMPDEST,
         // value, slot, jumpback
         OP_SWAP2,
         // slot, value, jumpback
         OP_SWAP1,
         // Encode a delegatecall to handleSpySstore()
-        // handleSpyCall.selector, slot, value, jumpback
-        [OP_PUSH32, ...to32ByteArray()],
-        // ptr, handleSpyCall.selector, slot, value, jumpback
+        // selector, slot, value, jumpback
+        [OP_PUSH32, ...to32ByteArray(ethjs.setLengthRight(HANDLE_SPY_SSTORE_SELECTOR, 32))],
+        // ptr, selector, slot, value, jumpback
         [OP_PUSH2, ...to2ByteArray(SCRATCH_MEM_LOC)],
         // slot, value, jumpback
         OP_MSTORE,
@@ -333,7 +372,7 @@ function transformBytecode(code, hooksAddress, origin) {
         // ptr+0x24, value, jumpback
         [OP_PUSH2, ...to2ByteArray(SCRATCH_MEM_LOC + 0x24)],
         OP_MSTORE,
-        // Perform the delegatecall
+        // Tee up the delegatecall args
         // retSize, jumpback
         [OP_PUSH1, 0],
         // retOffset, retSize, jumpback
@@ -341,23 +380,64 @@ function transformBytecode(code, hooksAddress, origin) {
         // argSize, retOffset, retSize, jumpback
         [OP_PUSH1, 0x44],
         // argOffset, argSize, retOffset, retSize, jumpback
-        [OP_PUSH1, ...to2ByteArray(SCRATCH_MEM_LOC)],
+        [OP_PUSH2, ...to2ByteArray(SCRATCH_MEM_LOC)],
         // target, argOffset, argSize, retOffset, retSize, jumpback
-        [OP_PUSH1, ...to20ByteArray(hooksAddress)],
+        [OP_PUSH20, ...to20ByteArray(hooksAddress)],
         // gas, target, argOffset, argSize, retOffset, retSize, jumpback
         OP_GAS,
-        // success, jumpback
-        OP_DELEGATECALL,
-        // jumpback, success
-        OP_SWAP1,
+        // checkedDelegateCallJumpDest, gas, target, argOffset, argSize, retOffset, retSize, jumpback
+        [OP_PUSH3, ...to3ByteArray(checkedDelegatecallOffset)],
         OP_JUMP,
     ];
     scratchOffset += getCodeBlockSize(sstoreHookBlock);
 
+    const logHookOffset = scratchOffset;
+    const logHookBlock = [
+        // jumpback, numTopics, dataOffset, dataSize, ...
+        OP_JUMPDEST,
+        // value, slot, jumpback
+        OP_SWAP2,
+        // slot, value, jumpback
+        OP_SWAP1,
+        // Encode a delegatecall to handleSpyLog()
+        // selector, slot, value, jumpback
+        [OP_PUSH32, ...to32ByteArray(ethjs.setLengthRight(HANDLE_SPY_LOG_SELECTOR, 32))],
+        // ptr, selector, slot, value, jumpback
+        [OP_PUSH2, ...to2ByteArray(SCRATCH_MEM_LOC)],
+        // slot, value, jumpback
+        OP_MSTORE,
+        // ptr+0x04, slot, value, jumpback
+        [OP_PUSH2, ...to2ByteArray(SCRATCH_MEM_LOC + 0x04)],
+        // value, jumpback
+        OP_MSTORE,
+        // ptr+0x24, value, jumpback
+        [OP_PUSH2, ...to2ByteArray(SCRATCH_MEM_LOC + 0x24)],
+        OP_MSTORE,
+        // Tee up the delegatecall args
+        // retSize, jumpback
+        [OP_PUSH1, 0],
+        // retOffset, retSize, jumpback
+        [OP_PUSH1, 0],
+        // argSize, retOffset, retSize, jumpback
+        [OP_PUSH1, 0x44],
+        // argOffset, argSize, retOffset, retSize, jumpback
+        [OP_PUSH2, ...to2ByteArray(SCRATCH_MEM_LOC)],
+        // target, argOffset, argSize, retOffset, retSize, jumpback
+        [OP_PUSH20, ...to20ByteArray(hooksAddress)],
+        // gas, target, argOffset, argSize, retOffset, retSize, jumpback
+        OP_GAS,
+        // checkedDelegateCallJumpDest, gas, target, argOffset, argSize, retOffset, retSize, jumpback
+        [OP_PUSH3, ...to3ByteArray(checkedDelegatecallOffset)],
+        OP_JUMP,
+    ];
+    scratchOffset += getCodeBlockSize(logHookBlock);
+
     const extraCodeBlocks = [
         jumpRouterBlock,
         jumpIRouterBlock,
+        checkedDelegatecallBlock,
         sstoreHookBlock,
+        logHookBlock,
     ];
 
     const patchedCodeOffset = scratchOffset;
@@ -367,8 +447,15 @@ function transformBytecode(code, hooksAddress, origin) {
         OP_JUMP,
     ];
     const jumpToJumpIRouterOpcodes = [
+        // 7, loc, bool
+        [OP_PUSH1, 7],
+        // pc, 7, loc, bool
+        OP_PC,
+        // jumpback, loc, bool
+        OP_ADD,
         [OP_PUSH3, ...to3ByteArray(jumpIRouterOffset)],
         OP_JUMP,
+        OP_JUMPDEST,
     ];
     const jumpToSStoreHookOpcodes = [
         // 7, slot, value
@@ -382,6 +469,18 @@ function transformBytecode(code, hooksAddress, origin) {
         OP_JUMP,
         OP_JUMPDEST,
     ];
+    const jumpToLogHookOpcodes = [
+        // 7, numTopics, ...
+        [OP_PUSH1, 7],
+        // pc, 7, numTopics, ...
+        OP_PC,
+        // jumpback, numTopics, ...
+        OP_ADD,
+        // logHookOffset, jumpback, numTopics, ...
+        [OP_PUSH3, ...to3ByteArray(logHookOffset)],
+        OP_JUMP,
+        OP_JUMPDEST,
+    ];
 
     const patchedCodeBlocks = splitCode(codeBuf).map(block => {
         const patchedBlock = [];
@@ -391,7 +490,6 @@ function transformBytecode(code, hooksAddress, origin) {
                 switch (op.opcode) {
                     case OP_PC:
                         // Replace with PUSH3 <op.offset>
-                        patchedBlock.push(OP_INVALID);
                         patchedBlock.push([OP_PUSH3, ...to3ByteArray(op.offset)]);
                         break;
                     case OP_JUMP:
@@ -427,9 +525,19 @@ function transformBytecode(code, hooksAddress, origin) {
                         // PUSH20 fake origin.
                         patchedBlock.push([PUSH20, ...to20ByteArray(origin)]);
                         break;
-                    // case OP_SSTORE:
-                    //     patchedBlock.push(...jumpToSStoreHookOpcodes);
-                    //     break;
+                    case OP_SSTORE:
+                        patchedBlock.push(...jumpToSStoreHookOpcodes);
+                        break;
+                    case OP_LOG0:
+                    case OP_LOG1:
+                    case OP_LOG2:
+                    case OP_LOG3:
+                    case OP_LOG4:
+                        patchedBlock.push(
+                            [PUSH1, op.opcode - OP_LOG0],
+                            ...jumpToLogHookOpcodes
+                        );
+                        break;
                     default:
                         patchedBlock.push(op);
                 }
@@ -483,7 +591,6 @@ function transformBytecode(code, hooksAddress, origin) {
             // TODO: can be wrong for first block
             if (block[0]?.offset !== undefined && block[0].opcode === OP_JUMPDEST) {
                 const key = block[0].offset * 3 + jumpRemapOffset;
-                console.log(block[0].offset, key, o);
                 outputCodeBuf.writeUIntBE(o, key, 3);
             }
             o += writeBlock(
@@ -493,6 +600,7 @@ function transformBytecode(code, hooksAddress, origin) {
             );
         }
     }
+    console.log([ ...outputCodeBuf].map(s => ethjs.toBuffer([s]).toString('hex')).join('_'));
     // writeBlock(
     //     outputCodeBuf,
     //     patchedCodeOffset + 1,
@@ -518,7 +626,7 @@ function getTotalBlocksSize(blocks) {
 function findSelector(artifact, name) {
     for (const sig in artifact.methodIdentifiers) {
         if (/(\w+)\(/.exec(sig)[1] === name) {
-            return `0x` + artifact.methodIdentifiers;
+            return `0x` + artifact.methodIdentifiers[sig];
         }
     }
     throw new Error(`Couldn't find a selector for ${name}!`);

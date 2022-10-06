@@ -62,12 +62,12 @@ contract Spy {
         uint256 gasUsed;
     }
 
-    Spy_CALL[] spy_calls;
-    Spy_SLOAD[] spy_sloads;
-    Spy_SSTORE[] spy_sstores;
-    Spy_LOG[] spy_logs;
-    Spy_CREATE[] spy_creates;
-    Spy_CREATE2[] spy_create2s;
+    Spy_CALL[] internal spy_calls;
+    Spy_SLOAD[] internal spy_sloads;
+    Spy_SSTORE[] internal spy_sstores;
+    Spy_LOG[] internal spy_logs;
+    Spy_CREATE[] internal spy_creates;
+    Spy_CREATE2[] internal spy_create2s;
 
 
     function onSpyCall(Spy_CALL memory spied) external virtual {
@@ -77,14 +77,16 @@ contract Spy {
     function onSpySstore(Spy_SSTORE memory spied) external virtual {
         spy_sstores.push(spied);
     }
+
+    function onSpyLog(Spy_LOG memory spied) external virtual {
+        spy_logs.push(spied);
+    }
 }
 
 contract SpyHooks {
     Spy constant SPY = Spy(0x9000000000000000000000000000000000000001);
-    // 2x GAS + 2x SUB + 1x SWAP + 1x PUSH + 1x JUMPI (probably way off)
-    uint256 constant CALL_GAS_OVERHEAD = 23;
-    uint256 constant SSTORE_GAS_OVERHEAD = 13;
 
+    uint256 constant CALL_GAS_OVERHEAD = 0; // TODO
     function handleSpyCall(
         Spy.CallType callType,
         uint256 gas_,
@@ -130,6 +132,62 @@ contract SpyHooks {
             gasUsed: gasUsed
         }));
     }
+
+    uint256 constant LOG0_GAS_OVERHEAD = 0; // TODO
+    uint256 constant LOG1_GAS_OVERHEAD = 0; // TODO
+    uint256 constant LOG2_GAS_OVERHEAD = 0; // TODO
+    uint256 constant LOG3_GAS_OVERHEAD = 0; // TODO
+    uint256 constant LOG4_GAS_OVERHEAD = 0; // TODO
+
+    function handleSpyLog(
+        uint8 numTopics,
+        bytes32 topic1,
+        bytes32 topic2,
+        bytes32 topic3,
+        bytes32 topic4,
+        bytes memory data
+    ) external returns (uint256 gasUsed) {
+        if (numTopics == 0) {
+            assembly {
+                gasUsed := gas()
+                log0(add(data, 0x20), mload(data))
+                gasUsed := sub(sub(gas(), gasUsed), LOG0_GAS_OVERHEAD)
+            }
+        } else if (numTopics == 1) {
+            assembly {
+                gasUsed := gas()
+                log1(add(data, 0x20), mload(data), topic1)
+                gasUsed := sub(sub(gas(), gasUsed), LOG1_GAS_OVERHEAD)
+            }
+        } else if (numTopics == 2) {
+            assembly {
+                gasUsed := gas()
+                log2(add(data, 0x20), mload(data), topic1, topic2)
+                gasUsed := sub(sub(gas(), gasUsed), LOG2_GAS_OVERHEAD)
+            }
+        } else if (numTopics == 3) {
+            assembly {
+                gasUsed := gas()
+                log3(add(data, 0x20), mload(data), topic1, topic2, topic3)
+                gasUsed := sub(sub(gas(), gasUsed), LOG3_GAS_OVERHEAD)
+            }
+        } else if (numTopics == 3) {
+            assembly {
+                gasUsed := gas()
+                log4(add(data, 0x20), mload(data), topic1, topic2, topic3, topic4)
+                gasUsed := sub(sub(gas(), gasUsed), LOG4_GAS_OVERHEAD)
+            }
+        }
+        SPY.onSpyLog(Spy.Spy_LOG({
+            index: 0, // TBD
+            context: address(this),
+            numTopics: numTopics,
+            topics: [topic1, topic2, topic3, topic4],
+            data: data
+        }));
+    }
+
+    uint256 constant SSTORE_GAS_OVERHEAD = 13; // TODO
 
     function handleSpySstore(
         uint256 slot,
@@ -178,7 +236,9 @@ contract Runner is Spy {
         bool success;
         bytes returnData;
         Spy_CALL[] spy_calls;
-        Spy_CALL[] spy_sloads;
+        Spy_SLOAD[] spy_sloads;
+        Spy_SSTORE[] spy_sstores;
+        Spy_LOG[] spy_logs;
     }
 
     bool is2929Enabled;
@@ -188,6 +248,10 @@ contract Runner is Spy {
         _setup();
         (result.success, result.returnData) =
             ctx.txOrigin.call(ctx.txTo, ctx.txValue, ctx.txData);
+        result.spy_calls = spy_calls;
+        result.spy_sstores = spy_sstores;
+        result.spy_sloads = spy_sloads;
+        result.spy_logs = spy_logs;
     }
 
     function _setup() private {
