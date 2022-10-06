@@ -190,42 +190,46 @@ function to32ByteArray(n) {
 
 function getCodeBlockSize(block) {
     let size = 0;
-    for (const op of block) {
-        if (Array.isArray(op)) {
-            size += op.length;
-        } else if (typeof(op) === 'number') {
-            size++;
-        } else {
-            if (Array.isArray(op.opcode)) {
-                size += op.opcode.length;
-            } else {
-                size++;
-            }
-        }
+    for (const op of iterBlockOps(block)) {
+        ++size;
     }
     return size;
 }
 
 function writeBlock(buf, offset, block) {
     let o = offset;
+    for (const op of iterBlockOps(block)) {
+        buf[o++] = op;
+    }
+    return o - offset;
+}
+
+function* iterBlockOps(block) {
     for (const op of block) {
         if (Array.isArray(op)) {
             for (const op_ of op) {
-                buf[o++] = op_;
+                yield op_;
             }
         } else if (typeof(op) === 'number') {
-            buf[o++] = op;
+            yield op;
         } else {
             if (Array.isArray(op.opcode)) {
                 for (const op_ of op.opcode) {
-                    buf[o++] = op_;
+                    yield op_;
                 }
             } else {
-                buf[o++] = op.opcode;
+                yield op.opcode;
             }
         }
     }
-    return o - offset;
+}
+
+function* iterBlocksOps(blocks) {
+    for (const block of blocks) {
+        for (const op of iterBlockOps(block)) {
+            yield op;
+        }
+    }
 }
 
 function transformBytecode(code, hooksAddress, origin) {
@@ -254,8 +258,9 @@ function transformBytecode(code, hooksAddress, origin) {
         for (const block of bx) {
             o += writeBlock(b, o, block);
         }
-        console.log(bx[0]);
-        console.log(b.length, codeBuf.length, b.slice(-10), codeBuf.slice(-10));
+        console.log([ ...iterBlockOps(bx[bx.length - 1])].map(op => op.toString(16)));
+        console.log(code.slice(-64));
+        console.log(b.length, codeBuf.length, b.slice(-32), codeBuf.slice(-32));
         console.log(codeBuf.equals(b));
     }
 
