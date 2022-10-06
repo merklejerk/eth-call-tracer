@@ -132,7 +132,8 @@ function splitCode(codeBuf) {
             case OP_JUMPDEST:
                 blocks.push(currBlock = [{ opcode: op, offset: i }]);
                 break;
-            // TODO: check for unregistered opcodes
+            // TODO: check for unregistered opcodes and close block.
+            //       Maybe also JUMPs?
             case OP_INVALID:
             case OP_SELFDESTRUCT:
             case OP_STOP:
@@ -153,7 +154,7 @@ function splitCode(codeBuf) {
                         const fullOpCode = [op];
                         const end = Math.min(codeBuf.length, i + n + 1);
                         for (let j = i + 1; j < end; ++j) {
-                            fullOpCode.push(codeBuf[i]);
+                            fullOpCode.push(codeBuf[j]);
                         }
                         currBlock.push({ opcode: fullOpCode, offset: i });
                     } else {
@@ -240,12 +241,23 @@ function transformBytecode(code, hooksAddress, origin) {
     // +-------------------+-------------------------+---------------+
     // |                     NEW CODE                                |
     // +-------------------------------------------------------------+
-    // | JUMP router code  | jump table lookup code  | 24            |
-    // | JUMPI router code | jumpi table lookup code | 24            |
+    // | JUMP router code  | jump table lookup code  | TODO          |
+    // | JUMPI router code | jumpi table lookup code | TODO          |
     // | SSTORE hook code  | <-                      | TODO          |
     // +-------------------+-------------------------+---------------+
 
     let codeBuf = ethjs.toBuffer(code);
+    {
+        const bx = splitCode(codeBuf);
+        const b = Buffer.alloc(getCodeBlockSize(bx));
+        let o = 0;
+        for (const block of bx) {
+            o += writeBlock(b, o, block);
+        }
+        console.log(bx[0]);
+        console.log(b.length, codeBuf.length, b.slice(-10), codeBuf.slice(-10));
+        console.log(codeBuf.equals(b));
+    }
 
     let scratchOffset = PREAMBLE_SIZE + codeBuf.length;
     
@@ -259,32 +271,29 @@ function transformBytecode(code, hooksAddress, origin) {
     // jump remap table.
     const jumpRouterBlock = [
         OP_JUMPDEST,
-        // // 3, offset
-        // [OP_PUSH1, 3],
-        // // mul(3, offset) -> offset'
-        // OP_MUL,
-        // // jumpRemapOffset, offset'
-        // [OP_PUSH3, ...to3ByteArray(jumpRemapOffset)],
-        // // add(jumpDataOffset, offset') -> offset''
-        // OP_ADD,
-        // // ptr, offset'', 3
-        // [OP_PUSH2, ...to2ByteArray(SCRATCH_MEM_LOC)],
-        // OP_CODECOPY,
-        // // ptr
-        // [OP_PUSH2, ...to2ByteArray(SCRATCH_MEM_LOC)],
-        // // JMP_OFFSET_32
-        // OP_MLOAD,
-        // // 232, JMP_OFFSET_32
-        // [OP_PUSH1, 232],
-        // // JMP_OFFSET
-        // OP_SHR,
-        // [OP_PUSH2, ...to2ByteArray(SCRATCH_MEM_LOC)],
-        // OP_MLOAD,
-        [OP_PUSH1, 0],
-        OP_MSTORE,
-        [OP_PUSH1, 0x20],
-        [OP_PUSH1, 0],
-        OP_RETURN,
+        // 3, offset
+        [OP_PUSH1, 3],
+        // offset, 3
+        OP_SWAP1,
+        // 3, offset, 3
+        OP_DUP2,
+        // offset', 3
+        OP_MUL,
+        // jumpRemapOffset, offset', 3
+        [OP_PUSH3, ...to3ByteArray(jumpRemapOffset)],
+        // offset'', 3
+        OP_ADD,
+        // ptr, offset'', 3
+        [OP_PUSH2, ...to2ByteArray(SCRATCH_MEM_LOC)],
+        OP_CODECOPY,
+        // ptr
+        [OP_PUSH2, ...to2ByteArray(SCRATCH_MEM_LOC)],
+        // JMP_OFFSET_32
+        OP_MLOAD,
+        // 232, JMP_OFFSET_32
+        [OP_PUSH1, 232],
+        // JMP_OFFSET
+        OP_SHR,
         OP_JUMP,
     ];
     scratchOffset += getCodeBlockSize(jumpRouterBlock);
@@ -296,8 +305,6 @@ function transformBytecode(code, hooksAddress, origin) {
         OP_JUMPI,
     ];
     scratchOffset += getCodeBlockSize(jumpIRouterBlock);
-
-    console.log(jumpIRouterOffset);
 
     const sstoreHookOffset = scratchOffset;
     const sstoreHookBlock = [
@@ -379,6 +386,7 @@ function transformBytecode(code, hooksAddress, origin) {
                 switch (op.opcode) {
                     case OP_PC:
                         // Replace with PUSH3 <op.offset>
+                        patchedBlock.push(OP_INVALID);
                         patchedBlock.push([OP_PUSH3, ...to3ByteArray(op.offset)]);
                         break;
                     case OP_JUMP:
@@ -471,7 +479,7 @@ function transformBytecode(code, hooksAddress, origin) {
             if (block[0]?.offset !== undefined && block[0].opcode === OP_JUMPDEST) {
                 const key = block[0].offset * 3 + jumpRemapOffset;
                 console.log(block[0].offset, key, o);
-                outputCodeBuf.writeUIntBE(key, o, 3);
+                outputCodeBuf.writeUIntBE(o, key, 3);
             }
             o += writeBlock(
                 outputCodeBuf,
@@ -488,10 +496,10 @@ function transformBytecode(code, hooksAddress, origin) {
     //         OP_JUMP,
     //     ],
     // );
-    console.log(outputCodeBuf.slice(0, 10));
-    console.log(outputCodeBuf.slice(extraCodeOffset, extraCodeOffset + 10));
-    console.log(outputCodeBuf.slice(patchedCodeOffset, patchedCodeOffset + 10));
-    console.log(scratchOffset);
+    // console.log(outputCodeBuf.slice(0, 10));
+    // console.log(outputCodeBuf.slice(extraCodeOffset, extraCodeOffset + 10));
+    // console.log(outputCodeBuf.slice(patchedCodeOffset, patchedCodeOffset + 10));
+    // console.log(scratchOffset);
     return ethjs.bufferToHex(outputCodeBuf);
 }
 
