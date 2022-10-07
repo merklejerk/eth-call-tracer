@@ -25,7 +25,7 @@ require('yargs').command('$0', 'run', yargs =>
         .option('rpc-url', { type: 'string', desc: 'node RPC url' })
         .option('from', { type: 'string', desc: 'TX caller', default: NULL_ADDRESS })
         .option('to', { type: 'string', desc: 'TX target', default: NULL_ADDRESS })
-        .option('value', { type: 'string', desc: 'TX value', default: 0 })
+        .option('value', { type: 'string', desc: 'TX value', default: '0' })
         .option('block', { type: 'number', desc: 'block number', default: 0 })
         .option('gas-price', { type: 'number', desc: 'gas price (gwei)', default: 0 })
         .option('data', { type: 'string', desc: 'TX data', default: NULL_BYTES }),
@@ -45,6 +45,7 @@ async function run(argv) {
     );
     const block = argv.block || await eth.getBlockNumber();
     const targetCode = await eth.getCode(argv.to);
+    console.log(argv.data);
     
     const r = await runner.run(
         {
@@ -547,7 +548,7 @@ function transformBytecode(code, hooksAddress, origin) {
 
             // copy data word
             // dataOffset, i, dataSize, dataOffset, jumpback
-            OP_DUP1,
+            OP_DUP3,
             // i, dataOffset, i, dataSize, dataOffset, jumpback
             OP_DUP2,
             // srcOffset, i, dataSize, dataOffset, jumpback
