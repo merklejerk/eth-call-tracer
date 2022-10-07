@@ -17,6 +17,7 @@ const NULL_BYTES = '0x';
 const RUNNER_ADDRESS = '0x9000000000000000000000000000000000000001';
 const HOOKS_ADDRESS = '0x9000000000000000000000000000000000000002';
 const HANDLE_SPY_SSTORE_SELECTOR = findSelector(HOOKS_ARTIFACT, 'handleSpySstore');
+const HANDLE_SPY_LOG_SELECTOR = findSelector(HOOKS_ARTIFACT, 'handleSpyLog');
 
 
 require('yargs').command('$0', 'run', yargs =>
@@ -64,7 +65,7 @@ async function run(argv) {
             },
         },
     );
-    console.log(r);
+    console.log(JSON.stringify(r, null, '\t'));
 }
 
 const CallType = {
@@ -125,6 +126,14 @@ const OP_JUMPDEST = 0x5B;
 const OP_SLOAD = 0x54;
 const OP_SSTORE = 0x55;
 const OP_ISZERO = 0x15;
+const OP_LT = 0x10;
+const OP_GT = 0x11;
+const OP_EQ = 0x14;
+const OP_LOG0 = 0xA0;
+const OP_LOG1 = 0xA1;
+const OP_LOG2 = 0xA2;
+const OP_LOG3 = 0xA3;
+const OP_LOG4 = 0xA4;
 
 function splitCode(codeBuf) {
     let currBlock = [];
@@ -244,19 +253,21 @@ function transformBytecode(code, hooksAddress, origin) {
     const PREAMBLE_SIZE = 5;
     const SCRATCH_MEM_LOC = 0x100;
 
-    // +-------------------+-------------------------+---------------+
-    // | section           | description             | size (bytes)  |
-    // +-------------------+-------------------------+---------------+
-    // | preamble          | jump to new code        | 4             |
-    // | deployed code     | original code           | len(code)     |
-    // | jump remap table  | original                | len(code) * 3 |
-    // +-------------------+-------------------------+---------------+
-    // |                     NEW CODE                                |
-    // +-------------------------------------------------------------+
-    // | JUMP router code  | jump table lookup code  | TODO          |
-    // | JUMPI router code | jumpi table lookup code | TODO          |
-    // | SSTORE hook code  | <-                      | TODO          |
-    // +-------------------+-------------------------+---------------+
+    // +------------------------+-------------------------+---------------+
+    // | section                | description             | size (bytes)  |
+    // +------------------------+-------------------------+---------------+
+    // | preamble               | jump to new code        | 4             |
+    // | deployed code          | original code           | len(code)     |
+    // | jump remap table       | original                | len(code) * 3 |
+    // +------------------------+-------------------------+---------------+
+    // |                        NEW CODE                                  |
+    // +------------------------+-------------------------+---------------+
+    // | JUMP router code       | jump table lookup code  | TODO          |
+    // | JUMPI router code      | jumpi table lookup code | TODO          |
+    // | checked delegatecaller | <-                      | TODO          |
+    // | SSTORE hook code       | <-                      | TODO          |
+    // | LOG hook code          | <-                      | TODO          |
+    // +------------------------+-------------------------+---------------+
 
     const codeBuf = ethjs.toBuffer(code);
 
@@ -317,8 +328,22 @@ function transformBytecode(code, hooksAddress, origin) {
 
     const checkedDelegatecallOffset = scratchOffset;
     const checkedDelegatecallBlock = [
-        // gas, target, argOffset, argSize, retOffset, retSize, jumpback
+        // argSize, jumpback
         OP_JUMPDEST,
+        // retSize, argSize, jumpback
+        [OP_PUSH1, 0],
+        // retOffset, retSize, argSize, jumpback
+        [OP_PUSH1, 0],
+        // retSize, retOffset, argSize, jumpback
+        OP_SWAP1,
+        // argSize, retOffset, retSize, jumpback
+        OP_SWAP2,
+        // argOffset, argSize, retOffset, retSize, jumpback
+        [OP_PUSH2, ...to2ByteArray(SCRATCH_MEM_LOC)],
+        // target, argOffset, argSize, retOffset, retSize, jumpback
+        [OP_PUSH20, ...to20ByteArray(hooksAddress)],
+        // gas, target, argOffset, argSize, retOffset, retSizejumpback
+        OP_GAS,
         // success, jumpback
         OP_DELEGATECALL,
         // !success, jumpback
@@ -371,22 +396,13 @@ function transformBytecode(code, hooksAddress, origin) {
         OP_MSTORE,
         // ptr+0x24, value, jumpback
         [OP_PUSH2, ...to2ByteArray(SCRATCH_MEM_LOC + 0x24)],
+        // jumpback
         OP_MSTORE,
-        // Tee up the delegatecall args
-        // retSize, jumpback
-        [OP_PUSH1, 0],
-        // retOffset, retSize, jumpback
-        [OP_PUSH1, 0],
-        // argSize, retOffset, retSize, jumpback
+        // argSize, jumpback
         [OP_PUSH1, 0x44],
-        // argOffset, argSize, retOffset, retSize, jumpback
-        [OP_PUSH2, ...to2ByteArray(SCRATCH_MEM_LOC)],
-        // target, argOffset, argSize, retOffset, retSize, jumpback
-        [OP_PUSH20, ...to20ByteArray(hooksAddress)],
-        // gas, target, argOffset, argSize, retOffset, retSize, jumpback
-        OP_GAS,
-        // checkedDelegateCallJumpDest, gas, target, argOffset, argSize, retOffset, retSize, jumpback
+        // checkedDelegateCallJumpDest, argSize, jumpback
         [OP_PUSH3, ...to3ByteArray(checkedDelegatecallOffset)],
+        // argSize, jumpback
         OP_JUMP,
     ];
     scratchOffset += getCodeBlockSize(sstoreHookBlock);
@@ -395,43 +411,193 @@ function transformBytecode(code, hooksAddress, origin) {
     const logHookBlock = [
         // jumpback, numTopics, dataOffset, dataSize, ...
         OP_JUMPDEST,
-        // value, slot, jumpback
-        OP_SWAP2,
-        // slot, value, jumpback
+        // numTopics, jumpback, dataOffset, dataSize, ...
         OP_SWAP1,
         // Encode a delegatecall to handleSpyLog()
-        // selector, slot, value, jumpback
+        // selector, numTopics, jumpback, dataOffset, dataSize, ...
         [OP_PUSH32, ...to32ByteArray(ethjs.setLengthRight(HANDLE_SPY_LOG_SELECTOR, 32))],
-        // ptr, selector, slot, value, jumpback
+        // ptr, selector, numTopics, jumpback, dataOffset, dataSize, ...
         [OP_PUSH2, ...to2ByteArray(SCRATCH_MEM_LOC)],
-        // slot, value, jumpback
-        OP_MSTORE,
-        // ptr+0x04, slot, value, jumpback
+        // numTopics, jumpback, dataOffset, dataSize, ...
+        OP_MSTORE, // Store selector
+        // numTopics, numTopics, jumpback, dataOffset, dataSize, ...
+        OP_DUP1,
+        // ptr, numTopics, numTopics, jumpback, dataOffset, dataSize, ...
         [OP_PUSH2, ...to2ByteArray(SCRATCH_MEM_LOC + 0x04)],
-        // value, jumpback
-        OP_MSTORE,
-        // ptr+0x24, value, jumpback
+        // numTopics, jumpback, dataOffset, dataSize, ...
+        OP_MSTORE, // Store numTopics
+        
+        // Fill the topic calldatas with 0s
+        [OP_PUSH1, 0],
         [OP_PUSH2, ...to2ByteArray(SCRATCH_MEM_LOC + 0x24)],
         OP_MSTORE,
-        // Tee up the delegatecall args
-        // retSize, jumpback
         [OP_PUSH1, 0],
-        // retOffset, retSize, jumpback
+        [OP_PUSH2, ...to2ByteArray(SCRATCH_MEM_LOC + 0x44)],
+        OP_MSTORE,
         [OP_PUSH1, 0],
-        // argSize, retOffset, retSize, jumpback
-        [OP_PUSH1, 0x44],
-        // argOffset, argSize, retOffset, retSize, jumpback
-        [OP_PUSH2, ...to2ByteArray(SCRATCH_MEM_LOC)],
-        // target, argOffset, argSize, retOffset, retSize, jumpback
-        [OP_PUSH20, ...to20ByteArray(hooksAddress)],
-        // gas, target, argOffset, argSize, retOffset, retSize, jumpback
-        OP_GAS,
-        // checkedDelegateCallJumpDest, gas, target, argOffset, argSize, retOffset, retSize, jumpback
+        [OP_PUSH2, ...to2ByteArray(SCRATCH_MEM_LOC + 0x64)],
+        OP_MSTORE,
+        [OP_PUSH1, 0],
+        [OP_PUSH2, ...to2ByteArray(SCRATCH_MEM_LOC + 0x84)],
+        OP_MSTORE,
+
+        // i, numTopics, jumpback, dataOffset, dataSize, ...
+        [OP_PUSH1, 0],
+        OP_JUMPDEST, // :loop
+            // escape
+            // numTopics, i, numTopics, jumpback, dataOffset, dataSize, ...
+            OP_DUP2,
+            // i, numTopics, i, numTopics, jumpback, dataOffset, dataSize, ...
+            OP_DUP2,
+            // i == numTopics, i, numTopics, jumpback, dataOffset, dataSize, ...
+            OP_EQ,
+            // ?, i == numTopics, i, numTopics, jumpback, dataOffset, dataSize, ...
+            [OP_PUSH1, 25],
+            // PC, ?, i == numTopics, i, numTopics, jumpback, dataOffset, dataSize, ...
+            OP_PC,
+            // :loop, i == numTopics, i, numTopics, jumpback, dataOffset, dataSize, ...
+            OP_ADD,
+            // i, numTopics, jumpback, dataOffset, dataSize, ...
+            OP_JUMPI, // -> :out
+
+            // copy topic
+            // numTopics, i, jumpback, dataOffset, dataSize, topic, ...
+            OP_SWAP1,
+            // jumpback, i, numTopics, dataOffset, dataSize, topic, ...
+            OP_SWAP2,
+            // dataOffset, i, numTopics, jumpback, dataSize, topic, ...
+            OP_SWAP3,
+            // dataSize, i, numTopics, jumpback, dataOffset, topic, ...
+            OP_SWAP4,
+            // topic, i, numTopics, jumpback, dataOffset, dataSize, ...
+            OP_SWAP5,
+            // ptr, topic, i, numTopics, jumpback, dataOffset, dataSize, ...
+            [OP_PUSH2, ...to2ByteArray(SCRATCH_MEM_LOC + 0x24)],
+            // 0x20, ptr, topic, i, numTopics, jumpback, dataOffset, dataSize, ...
+            [OP_PUSH1, 0x20],
+            // i, 0x20, ptr, topic, i, numTopics, jumpback, dataOffset, dataSize, ...
+            OP_DUP4,
+            // i*0x20, ptr, topic, i, numTopics, jumpback, dataOffset, dataSize, ...
+            OP_MUL,
+            // ptr+i*0x20, topic, i, numTopics, jumpback, dataOffset, dataSize, ...
+            OP_ADD,
+            // i, numTopics, jumpback, dataOffset, dataSize, ...
+            OP_MSTORE, // store topic
+
+            // i += 1
+            // 1, i, numTopics, jumpback, dataOffset, dataSize, ...
+            [OP_PUSH1, 1],
+            // i + 1, numTopics, jumpback, dataOffset, dataSize, ...
+            OP_ADD,
+            
+            // re-loop
+            // ?, i, numTopics, jumpback, dataOffset, dataSize, ...
+            [OP_PUSH1, 28],
+            // PC, ?, i, numTopics, jumpback, dataOffset, dataSize, ...
+            OP_PC,
+            // :loop, i, numTopics, jumpback, dataOffset, dataSize, ...
+            OP_SUB,
+            // i, numTopics, jumpback, dataOffset, dataSize, ...
+            OP_JUMP, // -> :loop
+        OP_JUMPDEST, // :out
+        // numTopics, jumpback, dataOffset, dataSize
+        OP_POP,
+
+        // jumpback, dataOffset, dataSize
+        OP_POP,
+        // dataSize, dataOffset, jumpback
+        OP_SWAP2,
+
+        // copy data arg offset
+        // 0xC0, dataSize, dataOffset, jumpback
+        [OP_PUSH1, 0xC0],
+        // dstDataOffsetOffset, 0xC0, dataSize, dataOffset, jumpback
+        [OP_PUSH2, ...to2ByteArray(SCRATCH_MEM_LOC + 0xA4)],
+        // dataSize, dataOffset, jumpback
+        OP_MSTORE,
+
+        // copy data length prefix
+        // dataSize, dataSize, dataOffset, jumpback
+        OP_DUP1,
+        // dstDataSizeOffset, dataSize, dataSize, dataOffset, jumpback
+        [OP_PUSH2, ...to2ByteArray(SCRATCH_MEM_LOC + 0xC4)],
+        // dataSize, dataOffset, jumpback
+        OP_MSTORE,
+
+        // i, dataSize, dataOffset, jumpback
+        [OP_PUSH1, 0],
+        OP_JUMPDEST, // :dataloop
+            // escape
+            // dataSize, i, dataSize, dataOffset, jumpback
+            OP_DUP2,
+            // i, dataSize, i, dataSize, dataOffset, jumpback
+            OP_DUP2,
+            // i < dataSize, i, dataSize, dataOffset, jumpback
+            OP_LT,
+            // i >= dataSize, i, dataSize, dataOffset, jumpback
+            OP_ISZERO,
+            // PC, ?, i >= dataSize, i, dataSize, dataOffset, jumpback
+            [OP_PUSH1, 21],
+            // PC, ?, i >= dataSize, i, dataSize, dataOffset, jumpback
+            OP_PC, 
+            // :dataloopout, i >= dataSize, i, dataSize, dataOffset, jumpback
+            OP_ADD,
+            // i, dataSize, dataOffset, jumpback
+            OP_JUMPI, // -> :dataloopout
+
+            // copy data word
+            // dataOffset, i, dataSize, dataOffset, jumpback
+            OP_DUP1,
+            // i, dataOffset, i, dataSize, dataOffset, jumpback
+            OP_DUP2,
+            // srcOffset, i, dataSize, dataOffset, jumpback
+            OP_ADD,
+            // dataWord, i, dataSize, dataOffset, jumpback
+            OP_MLOAD,
+            // dstOffset_start, dataWord, i, dataSize, dataOffset, jumpback
+            [OP_PUSH2, ...to2ByteArray(SCRATCH_MEM_LOC + 0xE4)],
+            // i, dstOffset_start, dataWord, i, dataSize, dataOffset, jumpback
+            OP_DUP3,
+            // dstOffset, dataWord, i, dataSize, dataOffset, jumpback
+            OP_ADD,
+            // i, dataSize, dataOffset, jumpback
+            OP_MSTORE, // store word of data
+
+            // i += 0x20
+            // 0x20, i, dataSize, dataOffset, jumpback
+            [OP_PUSH1, 0x20],
+            // i+0x20, dataSize, dataOffset, jumpback
+            OP_ADD,
+
+            // re-loop
+            // ?, i, dataSize, dataOffset, jumpback
+            [OP_PUSH1, 25],
+            // PC, ?, i, dataSize, dataOffset, jumpback
+            OP_PC,
+            // :dataloop, i, dataSize, dataOffset, jumpback
+            OP_SUB,
+            // i, dataSize, dataOffset, jumpback
+            OP_JUMP, // -> :dataloop
+        OP_JUMPDEST, // :dataloopout
+
+        // 0xE4, i, dataSize, dataOffset, jumpback
+        [OP_PUSH1, 0xE4],
+        // argSize, dataSize, dataOffset, jumpback
+        OP_ADD,
+        //  dataOffset, dataSize, argSize, jumpback
+        OP_SWAP2,
+        //  dataSize, argSize, jumpback
+        OP_POP,
+        // argSize, jumpback
+        OP_POP,
+        // checkedDelegateCallJumpDest, argSize jumpback
         [OP_PUSH3, ...to3ByteArray(checkedDelegatecallOffset)],
+        // argSize, jumpback
         OP_JUMP,
     ];
     scratchOffset += getCodeBlockSize(logHookBlock);
 
+    // TODO push to this so they stay in order.
     const extraCodeBlocks = [
         jumpRouterBlock,
         jumpIRouterBlock,
@@ -534,7 +700,7 @@ function transformBytecode(code, hooksAddress, origin) {
                     case OP_LOG3:
                     case OP_LOG4:
                         patchedBlock.push(
-                            [PUSH1, op.opcode - OP_LOG0],
+                            [OP_PUSH1, op.opcode - OP_LOG0],
                             ...jumpToLogHookOpcodes
                         );
                         break;
@@ -600,19 +766,7 @@ function transformBytecode(code, hooksAddress, origin) {
             );
         }
     }
-    console.log([ ...outputCodeBuf].map(s => ethjs.toBuffer([s]).toString('hex')).join('_'));
-    // writeBlock(
-    //     outputCodeBuf,
-    //     patchedCodeOffset + 1,
-    //     [
-    //         [OP_PUSH3, ...to3ByteArray(PREAMBLE_SIZE)],
-    //         OP_JUMP,
-    //     ],
-    // );
-    // console.log(outputCodeBuf.slice(0, 10));
-    // console.log(outputCodeBuf.slice(extraCodeOffset, extraCodeOffset + 10));
-    // console.log(outputCodeBuf.slice(patchedCodeOffset, patchedCodeOffset + 10));
-    // console.log(scratchOffset);
+    // console.log([ ...outputCodeBuf].map(s => ethjs.toBuffer([s]).toString('hex')).join('_'));
     return ethjs.bufferToHex(outputCodeBuf);
 }
 
