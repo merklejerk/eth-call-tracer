@@ -252,7 +252,7 @@ function stringToBytes32(s) {
 
 function transformBytecode(code, hooksAddress, origin) {
     const PREAMBLE_SIZE = 5;
-    const SCRATCH_MEM_LOC = 0x100;
+    const SCRATCH_MEM_LOC = 0x800;
 
     // +------------------------+-------------------------+---------------+
     // | section                | description             | size (bytes)  |
@@ -321,9 +321,26 @@ function transformBytecode(code, hooksAddress, origin) {
         OP_SWAP1,
         // Copy everything between JUMPDEST and JUMP in the jump router.
         ...jumpRouterBlock.slice(1, -1),
-        OP_JUMPI,
-        // Return to jumpback if JUMPI is not triggered
-        OP_JUMP
+        // jumpOffset, bool, jumpback
+        // bool, jumpOffset, jumpback
+        OP_SWAP1,
+        // ?, bool, jumpOffset, jumpback
+        [OP_PUSH1, 5],
+        // PC, ?, bool, jumpOffset, jumpback
+        OP_PC,
+        // :triggered, bool, jumpOffset, jumpback
+        OP_ADD,
+        // jumpOffset, jumpback
+        OP_JUMPI, // -> :triggered
+            // jumpback
+            OP_POP,
+            OP_JUMP,
+        OP_JUMPDEST, // :triggered
+            // jumpback, jumpOffset
+            OP_SWAP1,
+            // jumpOffset
+            OP_POP,
+            OP_JUMP
     ];
     scratchOffset += getCodeBlockSize(jumpIRouterBlock);
 
