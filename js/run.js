@@ -45,7 +45,6 @@ async function run(argv) {
     );
     const block = argv.block || await eth.getBlockNumber();
     const targetCode = await eth.getCode(argv.to);
-    console.log(argv.data);
     
     const r = await runner.run(
         {
@@ -66,7 +65,21 @@ async function run(argv) {
             },
         },
     );
-    console.log(JSON.stringify(r, null, '\t'));
+    console.log(JSON.stringify(cleanResultObject(r), null, '\t'));
+}
+
+function cleanResultObject(o) {
+    if (Array.isArray(o)) {
+        return o.map(v => cleanResultObject(v));
+    } else if (typeof(o) === 'object') {
+        return Object.assign({}, ...Object.entries(o).map(([k, v]) => {
+            if (!/^\d+$/.test(k)) {
+                return { [k]: cleanResultObject(v) };
+            }
+            return {};
+        }));
+    }
+    return o;
 }
 
 const CallType = {
