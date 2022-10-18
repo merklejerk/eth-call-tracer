@@ -1,0 +1,47 @@
+::jumpi-router
+// jumpback, loc, bool
+JUMPDEST
+// bool, loc, jumpback
+SWAP2
+// loc, bool, jumpback
+SWAP1
+// Copy everything between JUMPDEST and JUMP in the jump router.
+// 3, loc
+PUSH1, 3
+// loc, 3
+SWAP1
+// 3, loc, 3
+DUP2
+// loc', 3
+MUL
+// jumpRemapOffset, offset', 3
+PUSH3 $JUMP_MAP_OFFSET
+// offset'', 3
+ADD
+// ptr, offset'', 3
+PUSH2 $SCRATCH_MEM_LOC
+CODECOPY
+// ptr
+PUSH2 $SCRATCH_MEM_LOC
+// jumpOffset(32)
+MLOAD
+// 232, jumpOffset(32)
+PUSH1 232
+// jumpOffset, bool, jumpback
+SHR
+// bool, jumpOffset, jumpback
+SWAP1
+// :triggered, bool, jumpOffset, jumpback
+PUSH :triggered
+// jumpOffset, jumpback
+JUMPI // -> :triggered
+    // jumpback
+    POP
+    JUMP
+:triggered
+JUMPDEST
+    // jumpback, jumpOffset
+    SWAP1
+    // jumpOffset
+    POP
+    JUMP

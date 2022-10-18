@@ -1,0 +1,26 @@
+::jump-router
+JUMPDEST
+// 3, offset
+PUSH1 3
+// offset, 3
+SWAP1
+// 3, offset, 3
+DUP2
+// offset', 3
+MUL
+// jumpRemapOffset, offset', 3
+PUSH3 $JUMP_MAP_OFFSET
+// offset'', 3
+ADD
+// ptr, offset'', 3
+PUSH2 $SCRATCH_MEM_LOC
+CODECOPY
+// ptr
+PUSH2 $SCRATCH_MEM_LOC
+// JMP_OFFSET_32
+MLOAD
+// 232, JMP_OFFSET_32
+PUSH1 232
+// JMP_OFFSET
+SHR
+JUMP

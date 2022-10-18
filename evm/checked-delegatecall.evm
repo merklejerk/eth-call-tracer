@@ -1,0 +1,40 @@
+::checked-delegatecall
+// argSize, jumpback
+JUMPDEST
+// retSize, argSize, jumpback
+PUSH1 0
+// retOffset, retSize, argSize, jumpback
+PUSH1 0
+// retSize, retOffset, argSize, jumpback
+SWAP1
+// argSize, retOffset, retSize, jumpback
+SWAP2
+// argOffset, argSize, retOffset, retSize, jumpback
+PUSH2 $SCRATCH_MEM_LOC
+// target, argOffset, argSize, retOffset, retSize, jumpback
+PUSH20 $HOOKS_CONTRACT_ADDRESS
+// gas, target, argOffset, argSize, retOffset, retSizejumpback
+GAS
+// success, jumpback
+DELEGATECALL
+// !success, jumpback
+ISZERO
+// :failed, !success, jumpback
+PUSH :failed
+JUMPI
+// jumpback
+JUMP,
+:failed
+JUMPDEST
+// errmsg, jumpback 
+PUSH32 $HOOK_CALL_FAILED_ERROR
+// 0x00, errmsg, jumpback
+PUSH1 0x00
+// jumpback
+MSTORE
+// 0x20, jumpback
+PUSH1 0x20
+// 0x00, 0x20, jumpback
+PUSH1 0x00
+// jumpback
+REVERT

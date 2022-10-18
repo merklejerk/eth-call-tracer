@@ -1,0 +1,198 @@
+::log-hook
+// jumpback, numTopics, dataOffset, dataSize, ...
+JUMPDEST
+// numTopics, jumpback, dataOffset, dataSize, ...
+SWAP1
+// Encode a delegatecall to handleSpyLog()
+// selector, numTopics, jumpback, dataOffset, dataSize, ...
+PUSH32 $HANDLE_SPY_LOG_SELECTOR
+// ptr, selector, numTopics, jumpback, dataOffset, dataSize, ...
+PUSH2 SCRATCH_MEM_LOC
+// numTopics, jumpback, dataOffset, dataSize, ...
+MSTORE // Store selector
+// numTopics, numTopics, jumpback, dataOffset, dataSize, ...
+DUP1
+// 0x04, numTopics, numTopics, jumpback, dataOffset, dataSize, ...
+PUSH1 0x04
+// ptr, 0x04, numTopics, numTopics, jumpback, dataOffset, dataSize, ...
+PUSH2 $SCRATCH_MEM_LOC
+// ptr, numTopics, numTopics, jumpback, dataOffset, dataSize, ...
+ADD
+// numTopics, jumpback, dataOffset, dataSize, ...
+MSTORE // Store numTopics
+
+// Fill the topic calldatas with 0s
+PUSH1, 0
+PUSH1 0x24
+PUSH2 $SCRATCH_MEM_LOC
+MSTORE
+PUSH1 0
+PUSH1 0x44
+PUSH2 $SCRATCH_MEM_LOC
+MSTORE
+PUSH1 0
+PUSH1 0x64
+PUSH2 $SCRATCH_MEM_LOC
+MSTORE
+PUSH1 0
+PUSH1 0x84
+PUSH2 $SCRATCH_MEM_LOC
+MSTORE
+
+// i=0, numTopics, jumpback, dataOffset, dataSize, ...
+PUSH1 0
+:topics-loop
+JUMPDEST
+    // escape
+    // numTopics, i, numTopics, jumpback, dataOffset, dataSize, ...
+    DUP2
+    // i, numTopics, i, numTopics, jumpback, dataOffset, dataSize, ...
+    DUP2
+    // i == numTopics, i, numTopics, jumpback, dataOffset, dataSize, ...
+    EQ
+    // :topics-loop-out, i == numTopics, i, numTopics, jumpback, dataOffset, dataSize, ...
+    PUSH3 :topics-loop-out
+    // i, numTopics, jumpback, dataOffset, dataSize, ...
+    JUMPI // -> :topics-loop-out
+
+    // copy topic
+    // numTopics, i, jumpback, dataOffset, dataSize, topic, ...
+    SWAP1
+    // jumpback, i, numTopics, dataOffset, dataSize, topic, ...
+    SWAP2
+    // dataOffset, i, numTopics, jumpback, dataSize, topic, ...
+    SWAP3
+    // dataSize, i, numTopics, jumpback, dataOffset, topic, ...
+    SWAP4
+    // topic, i, numTopics, jumpback, dataOffset, dataSize, ...
+    SWAP5
+    // 0x24, topic, i, numTopics, jumpback, dataOffset, dataSize, ...
+    PUSH1 0x24
+    // ptr, 0x24, topic, i, numTopics, jumpback, dataOffset, dataSize, ...
+    PUSH2 $SCRATCH_MEM_LOC
+    // ptr, topic, i, numTopics, jumpback, dataOffset, dataSize, ...
+    ADD
+    // 0x20, ptr, topic, i, numTopics, jumpback, dataOffset, dataSize, ...
+    PUSH1 0x20
+    // i, 0x20, ptr, topic, i, numTopics, jumpback, dataOffset, dataSize, ...
+    DUP4
+    // i*0x20, ptr, topic, i, numTopics, jumpback, dataOffset, dataSize, ...
+    MUL
+    // ptr+i*0x20, topic, i, numTopics, jumpback, dataOffset, dataSize, ...
+    ADD
+    // i, numTopics, jumpback, dataOffset, dataSize, ...
+    MSTORE // store topic
+
+    // i += 1
+    // 1, i, numTopics, jumpback, dataOffset, dataSize, ...
+    PUSH1 1
+    // i + 1, numTopics, jumpback, dataOffset, dataSize, ...
+    ADD
+    
+    // re-loop
+    // :topics-loop, i, numTopics, jumpback, dataOffset, dataSize, ...
+    PUSH3 :topics-loop
+    // i, numTopics, jumpback, dataOffset, dataSize, ...
+    JUMP // -> :topics-loop
+:topics-loop-out
+JUMPDEST
+// numTopics, jumpback, dataOffset, dataSize
+POP
+
+// jumpback, dataOffset, dataSize
+POP
+// dataSize, dataOffset, jumpback
+SWAP2
+
+// copy data arg offset
+// 0xC0, dataSize, dataOffset, jumpback
+PUSH1 0xC0
+// 0xA4, 0xC0, dataSize, dataOffset, jumpback
+PUSH1 0xA4
+// scratch, 0xA4, 0xC0, dataSize, dataOffset, jumpback
+PUSH2 $SCRATCH_MEM_LOC
+// scratch+0xA4, 0xA4, 0xC0, dataSize, dataOffset, jumpback
+ADD
+// dataSize, dataOffset, jumpback
+MSTORE
+
+// copy data length prefix
+// dataSize, dataSize, dataOffset, jumpback
+DUP1
+// 0xC4, dataSize, dataSize, dataOffset, jumpback
+PUSH1 0xC4
+// scratch, 0xC4, dataSize, dataSize, dataOffset, jumpback
+PUSH2 $SCRATCH_MEM_LOC
+// scratch+0xC4, dataSize, dataSize, dataOffset, jumpback
+ADD
+// dataSize, dataOffset, jumpback
+MSTORE
+
+// i=0, dataSize, dataOffset, jumpback
+PUSH1 0
+:data-loop
+JUMPDEST
+    // escape
+    // dataSize, i, dataSize, dataOffset, jumpback
+    DUP2
+    // i, dataSize, i, dataSize, dataOffset, jumpback
+    DUP2
+    // i < dataSize, i, dataSize, dataOffset, jumpback
+    LT
+    // i >= dataSize, i, dataSize, dataOffset, jumpback
+    ISZERO
+    // :data-loop-out, i >= dataSize, i, dataSize, dataOffset, jumpback
+    PUSH3 :data-loop-out
+    // i, dataSize, dataOffset, jumpback
+    JUMPI // -> :dataloopout
+
+    // copy data word
+    // dataOffset, i, dataSize, dataOffset, jumpback
+    DUP3
+    // i, dataOffset, i, dataSize, dataOffset, jumpback
+    DUP2
+    // srcOffset, i, dataSize, dataOffset, jumpback
+    ADD
+    // dataWord, i, dataSize, dataOffset, jumpback
+    MLOAD
+    // 0xE4, dataWord, i, dataSize, dataOffset, jumpback
+    PUSH1 0xE4
+    // scratch, 0xE4, dataWord, i, dataSize, dataOffset, jumpback
+    PUSH2 $SCRATCH_MEM_LOC
+    // dstOffset_start, dataWord, i, dataSize, dataOffset, jumpback
+    ADD
+    // i, dstOffset_start, dataWord, i, dataSize, dataOffset, jumpback
+    DUP3
+    // dstOffset, dataWord, i, dataSize, dataOffset, jumpback
+    ADD
+    // i, dataSize, dataOffset, jumpback
+    MSTORE // store word of data
+
+    // i += 0x20
+    // 0x20, i, dataSize, dataOffset, jumpback
+    PUSH1 0x20
+    // i+0x20, dataSize, dataOffset, jumpback
+    ADD
+
+    // re-loop
+    // :dataloop, i, dataSize, dataOffset, jumpback
+    PUSH3 :data-loop
+    // i, dataSize, dataOffset, jumpback
+    JUMP
+:data-loop-out
+JUMPDEST
+
+// 0xE4, i, dataSize, dataOffset, jumpback
+PUSH1 0xE4
+// argSize, dataSize, dataOffset, jumpback
+ADD
+//  dataOffset, dataSize, argSize, jumpback
+SWAP2
+//  dataSize, argSize, jumpback
+POP
+// argSize, jumpback
+POP
+// checkedDelegateCallJumpDest, argSize jumpback
+PUSH3 :checked-delegatecall
+// argSize, jumpback
+JUMP

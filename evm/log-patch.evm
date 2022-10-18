@@ -1,0 +1,6 @@
+PUSH3 :jumpback
+// logHookOffset, jumpback, numTopics, ...
+PUSH3 ::log-hook
+JUMP
+:jumpback
+JUMPDEST
