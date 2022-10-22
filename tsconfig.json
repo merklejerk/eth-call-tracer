@@ -1,0 +1,9 @@
+{
+    "compilerOptions": {
+        "outDir": "js",
+        "esModuleInterop": true,
+        "resolveJsonModule": true,
+        "sourceMap": true
+    },
+    "include": ["ts/**/*.ts"]
+}

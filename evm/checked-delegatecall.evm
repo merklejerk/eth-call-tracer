@@ -20,10 +20,10 @@ DELEGATECALL
 // !success, jumpback
 ISZERO
 // :failed, !success, jumpback
-PUSH :failed
+PUSH3 :failed
 JUMPI
 // jumpback
-JUMP,
+JUMP
 :failed
 JUMPDEST
 // errmsg, jumpback 

@@ -1,4 +1,4 @@
-:sstore-hook
+::sstore-hook
 // jumpback, slot, value
 JUMPDEST
 // value, slot, jumpback
@@ -17,7 +17,7 @@ PUSH2 $SCRATCH_MEM_LOC
 // slot, value, jumpback
 MSTORE
 // 0x04, slot, value, jumpback
-PUSH 0x04
+PUSH1 0x04
 // scratch, 0x04, slot, value, jumpback
 PUSH2 $SCRATCH_MEM_LOC
 // scratch+0x04, slot, value, jumpback
@@ -34,7 +34,7 @@ ADD
 MSTORE
 // argSize, jumpback
 PUSH1 0x44
-// checkedDelegateCallJumpDest, argSize, jumpback
-PUSH3 :checked-delegatecall
+// ::checked-delegatecall, argSize, jumpback
+PUSH3 ::checked-delegatecall
 // argSize, jumpback
 JUMP

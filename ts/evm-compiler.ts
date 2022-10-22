@@ -1,11 +1,5 @@
-import { bgBlue } from 'colors';
-import crypto from 'crypto';
-
-const VALID_PUSH_COMMANDS = Object.assign(
-    {},
-    // PUSH1-PUSH32
-    ...(() => [...new Array(32)].map((v, i) => ({[`PUSH${i + 1}`] : true })))(),
-);
+import * as crypto from 'crypto';
+import * as fs from 'fs/promises';
 
 export const OPCODES = {
     CALL: 0xF1,
@@ -15,6 +9,7 @@ export const OPCODES = {
     PUSH1: 0x60,
     PUSH2: 0x61,
     PUSH3: 0x62,
+    PUSH4: 0x63,
     PUSH20: 0x73,
     PUSH32: 0x7F,
     JUMP: 0x56,
@@ -48,6 +43,7 @@ export const OPCODES = {
     SWAP11: 0x9A,
     SWAP12: 0x9B,
     POP: 0x50,
+    SHL: 0x1B,
     SHR: 0x1C,
     ADD: 0x01,
     MUL: 0x02,
@@ -73,12 +69,31 @@ export const OPCODES = {
     LOG4: 0xA4,
 }
 
+const VALID_PUSH_COMMANDS = Object.assign(
+    {},
+    // PUSH1-PUSH32
+    ...(() => [...new Array(32)].map((v, i) => ({[`PUSH${i + 1}`] : true })))(),
+);
+
+const LABEL_REGEX = /^::?[\w-_]+$/;
+const PUSH_PARAM_REGEXES = [
+    LABEL_REGEX,
+    /^\d+$/,
+    /^0x[a-f0-9]{2,64}$/i,
+    /^\$[-_a-z0-1]+$/i,
+];
+
 export interface Instruction {
     opcode: number;
-    payload?: Buffer | string;
+    payload?: Buffer | string | number;
     label?: string;
+    originalOffset?: number;
     offset?: number;
-    scopeId: string;
+    scopeId?: string;
+}
+
+export async function parseAsmFileAsync(file, env={}): Promise<Instruction[]> {
+    return parseAsm(await fs.readFile(file, { encoding: 'utf-8' }));
 }
 
 export function parseAsm(asm, env={}): Instruction[] {
@@ -86,18 +101,18 @@ export function parseAsm(asm, env={}): Instruction[] {
     const scopeId = randomId();
     let nextLabel: string | null = null;
     for (const line of asm.split(/\r?\n/)) {
-        const words = line.exec(/^(.*)(\/\/.+)?$/)?.[1]
+        const words = /^(.*?)(\/\/.*)?$/.exec(line)?.[1]
             .split(/\s+/)
             .map(word => word.trim())
             .filter(word => word && word.length)
-        if (!words) {
+        if (!words.length) {
             continue;
         }
-        if (/^::?\w+/.test(words[1])) {
-            nextLabel = words[1];
+        if (LABEL_REGEX.test(words[0])) {
+            nextLabel = words[0];
             continue;
         }
-        const op = words[1].toUpperCase();
+        const op = words[0].toUpperCase();
         if (!(op in OPCODES)) {
             throw new Error(`Unknown EVM instruction: ${op}`);
         }
@@ -106,19 +121,18 @@ export function parseAsm(asm, env={}): Instruction[] {
             if (!r) {
                 throw new Error(`Invalid PUSH command: ${op}`);
             }
-            const size = getOpcodePayloadSize(op);
-            if (!/^(\d+|0x[a-f0-9]{2,64}|::?\w+|$\w+)$/i.test(words[2])) {
-                throw new Error(`Invalid PUSH param: ${words[2]}`);
+            if (!PUSH_PARAM_REGEXES.some(r => r.test(words[1]))) {
+                throw new Error(`Invalid PUSH param: ${words[1]}`);
             }
-            const rawPayload = words[2].startsWith('$')
-                ? env[words[2].slice(1)]
-                : words[2];
+            const rawPayload = words[1].startsWith('$')
+                ? env[words[1].slice(1)]
+                : words[1];
             if (rawPayload === 'undefined') {
-                throw new Error(`Missing asm reference: ${words[2]}`);
+                throw new Error(`Missing asm reference: ${words[1]}`);
             }
             instructions.push({
                 opcode: OPCODES[op],
-                payload: parsePayload(rawPayload, size),
+                payload: rawPayload,
                 scopeId: scopeId,
             });
         } else {
@@ -135,7 +149,7 @@ export function parseAsm(asm, env={}): Instruction[] {
     return instructions;
 }
 
-function randomId(): string {
+export function randomId(): string {
     return crypto.randomBytes(16).toString('hex');
 }
 
@@ -150,7 +164,7 @@ export function parseBytecode(bytecode: number[] | Buffer): Instruction[] {
                 instructions.push({
                    opcode: op,
                    scopeId: currentScopeId,
-                   offset: i,
+                   originalOffset: i,
                 });
                 break;
             // TODO: check for unregistered opcodes and close block.
@@ -164,7 +178,7 @@ export function parseBytecode(bytecode: number[] | Buffer): Instruction[] {
                     instructions.push({
                         opcode: op,
                         scopeId: currentScopeId,
-                        offset: i,
+                        originalOffset: i,
                     });
                 } 
                 break;
@@ -174,7 +188,7 @@ export function parseBytecode(bytecode: number[] | Buffer): Instruction[] {
                     const instruction: Instruction = {
                         opcode: op,
                         scopeId: currentScopeId,
-                        offset: i,
+                        originalOffset: i,
                     };
                     if (n > 0) {
                         const end = Math.min(bytecode.length, i + n + 1);
@@ -195,7 +209,7 @@ export function isPushOpcode(opcode): boolean {
 
 export function getOpcodePayloadSize(opcode): number {
     if (isPushOpcode(opcode)) {
-        return getOpcodePayloadSize(opcode);
+        return opcode - OPCODES.PUSH1 + 1;
     }
     return 0;
 }
@@ -204,81 +218,111 @@ export function getOpcodeSize(opcode: number): number {
     return getOpcodePayloadSize(opcode) + 1;
 }
 
-export function commitInstructions(
+export function getCodeSize(instructions: Instruction[]): number {
+    return instructions.reduce((a, op) => a + getOpcodeSize(op.opcode), 0);
+}
+
+export function commitCode(
     instructions: Instruction[],
-    instructionsStart: number,
-    instructionsCount: number,
     commitStart: number,
-): void {
+    instructionsStart: number = 0,
+    instructionsCount?: number,
+): number {
     let commitOffset = commitStart;
+    if (instructionsCount === undefined) {
+        instructionsCount = Math.min(
+            instructions.length,
+            instructionsStart + instructions.length,
+        );
+    }
     for (let i = 0; i < instructionsCount; ++i) {
         const p = instructions[i + instructionsStart];
         const s = getOpcodeSize(p.opcode);
         p.offset = commitOffset;
         commitOffset += s;
     }
+    return commitOffset - commitStart;
 }
 
-export function serializeInstructions(
-    instructions: Instruction[],
+export function serializeCode(
     buf: Buffer,
-    instructionsStart?: number,
+    instructions: Instruction[],
+    instructionsStart: number = 0,
     instructionsCount?: number,
-    bufStart?: number
+    commitOffset: number = 0,
 ): void {
-    bufStart = bufStart || 0;
     instructionsStart = instructionsStart || 0;
-    instructionsCount = instructionsCount || instructions.length;
+    if (instructionsCount === undefined) {
+        instructionsCount = Math.min(
+            instructions.length,
+            instructionsStart + instructions.length,
+        );
+    }
     for (let i = 0; i < instructionsCount; ++i) {
         const p = instructions[i + instructionsStart];
         if (p.offset === undefined) {
             throw new Error(`Encountered uncommitted instruction`);
         }
         const s = getOpcodeSize(p.opcode);
-        buf.writeInt8(p.opcode);
-        if (getOpcodePayloadSize(p.opcode) != 0) {
-            if (!Buffer.isBuffer(p.payload)) {
-                throw new Error(`Trying to serialize opcode with invalid payload`);
-            }
-            p.payload.copy(buf, bufStart + p.offset);
+        buf.writeUint8(p.opcode, p.offset);
+        const payloadSize = getOpcodePayloadSize(p.opcode);
+        if (p.payload && payloadSize != 0) {
+            parsePayload(p.payload, payloadSize).copy(buf, commitOffset + p.offset + 1);
         }
     }
 }
 
-export function linkInstructions(instructions: Instruction[]): void {
-    const labelMaps = { ['GLOBAL']: {} } as
+// Map labels to jump offsets.
+export function linkCodes(...codes: Instruction[][]): void {
+    const labelMaps = {} as
         { [scope: string]: { [label: string]: number } };
-    for (const p of instructions) {
-        if (typeof(p.offset) !== 'number') {
-            throw new Error(`Encountered uncommitted opcode: ${p}`);
-        }
-        if (p.label) {
-            const label = p.label;
-            const scopedLabelMap = label.startsWith('::')
-                ? labelMaps['GLOBAL']
-                : labelMaps[p.scopeId];
-            if (label in scopedLabelMap) {
-                throw new Error(`Label ${label} already exists`);
+    for (const instructions of codes) {
+        for (const p of instructions) {
+            if (typeof(p.offset) !== 'number') {
+                throw new Error(`Encountered uncommitted opcode: ${p}`);
             }
-            scopedLabelMap[label] = p.offset;
+            if (p.label) {
+                const label = p.label;
+                let scope = 'GLOBAL';
+                if (!label.startsWith('::')) {
+                    if (!p.scopeId) {
+                        throw new Error(`Encountered local label ${label} outside of scope`);
+                    }
+                    scope = p.scopeId;
+                }
+                const scopedLabelMap = labelMaps[scope] = labelMaps[scope] || {};
+                if (label in scopedLabelMap) {
+                    throw new Error(`Label ${label} already exists in scope ${scope}`);
+                }
+                scopedLabelMap[label] = p.offset;
+            }
         }
     }
-    for (const p of instructions) {
-        if (isPushOpcode(p.opcode)) {
-            if (
-                typeof(p.payload) === 'string' &&
-                p.payload && /^::?\w+$/.test(p.payload)
-            ) {
-                const label = p.payload;
-                const scopedLabelMap = label.startsWith('::')
-                    ? labelMaps['GLOBAL'] : labelMaps[p.scopeId];
-                if (!label || !(label in scopedLabelMap)) {
-                    throw new Error(`label ${label} not found in scope`);
+    for (const instructions of codes) {
+        for (const p of instructions) {
+            if (isPushOpcode(p.opcode)) {
+                if (
+                    typeof(p.payload) === 'string' &&
+                    p.payload && LABEL_REGEX.test(p.payload)
+                ) {
+                    const label = p.payload;
+                    let scopedLabelMap;
+                    if (label.startsWith('::')) {
+                        scopedLabelMap = labelMaps['GLOBAL'];
+                    } else {
+                        if (!p.scopeId) {
+                            throw new Error(`Encountered local label ${label} outside of scope`);
+                        }
+                        scopedLabelMap = labelMaps[p.scopeId];
+                    }
+                    if (!label || !(label in scopedLabelMap)) {
+                        throw new Error(`label ${label} not found in scope`);
+                    }
+                    p.payload = parsePayload(
+                        scopedLabelMap[label],
+                        getOpcodePayloadSize(p.opcode),
+                    );
                 }
-                p.payload = parsePayload(
-                    scopedLabelMap[label],
-                    getOpcodePayloadSize(p.opcode),
-                );
             }
         }
     }
@@ -300,8 +344,13 @@ function parsePayload(
         return Buffer.from(BigInt(payload).toString(16), 'hex');
     }
     const buf = Buffer.alloc(size);
-    for (const i = 0; i < payload.length; ++i) {
+    for (let i = 0; i < payload.length; ++i) {
         buf.writeInt8(payload[i], i);
     }
     return buf;
+}
+
+export function dupeCode(instructions: Instruction[]): Instruction[] {
+    const scopeId = randomId();
+    return instructions.map(op => ({ ...op, scopeId: scopeId }));
 }

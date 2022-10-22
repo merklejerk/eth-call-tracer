@@ -7,7 +7,7 @@ SWAP1
 // selector, numTopics, jumpback, dataOffset, dataSize, ...
 PUSH32 $HANDLE_SPY_LOG_SELECTOR
 // ptr, selector, numTopics, jumpback, dataOffset, dataSize, ...
-PUSH2 SCRATCH_MEM_LOC
+PUSH2 $SCRATCH_MEM_LOC
 // numTopics, jumpback, dataOffset, dataSize, ...
 MSTORE // Store selector
 // numTopics, numTopics, jumpback, dataOffset, dataSize, ...
@@ -22,7 +22,7 @@ ADD
 MSTORE // Store numTopics
 
 // Fill the topic calldatas with 0s
-PUSH1, 0
+PUSH1 0
 PUSH1 0x24
 PUSH2 $SCRATCH_MEM_LOC
 MSTORE
@@ -192,7 +192,7 @@ SWAP2
 POP
 // argSize, jumpback
 POP
-// checkedDelegateCallJumpDest, argSize jumpback
-PUSH3 :checked-delegatecall
+// ::checked-delegatecall, argSize jumpback
+PUSH3 ::checked-delegatecall
 // argSize, jumpback
 JUMP
