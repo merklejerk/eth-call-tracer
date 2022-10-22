@@ -55,6 +55,8 @@ export async function patchBytecodeAsync(
         'SCRATCH_MEM_LOC': SCRATCH_MEM_LOC,
         'HANDLE_SPY_SSTORE_SELECTOR': HANDLE_SPY_SSTORE_SELECTOR,
         'HANDLE_SPY_LOG_SELECTOR': HANDLE_SPY_LOG_SELECTOR,
+        'PREAMBLE_SIZE': 5,
+        'HOOK_CALL_FAILED_ERROR': stringToBytes32('hook call failed'),
     };
     const fragments = Object.assign({},
         ...(await Promise.all(ALL_FRAGMENT_NAMES.map(f => parseAsmFragmentAsync(f, env))))
@@ -94,6 +96,14 @@ export async function patchBytecodeAsync(
             case OPCODES.SSTORE:
                 // Replace with sstore patch.
                 runtimeCode.push(...dupeCode(fragments[PatchFragments.SStorePatch]));
+                break;
+            case OPCODES.JUMPDEST:
+                // Assign a global label and pop off the top item on the stack
+                // so it works with the jump router.
+                runtimeCode.push(
+                    { ...op, label: `::__jump__${op.originalOffset}__` },
+                    { opcode: OPCODES.POP },
+                );
                 break;
             case OPCODES.LOG0:
             case OPCODES.LOG1:
@@ -170,4 +180,8 @@ function findSelector(artifact: any, name: string): string {
         }
     }
     throw new Error(`Couldn't find a selector for ${name}!`);
+}
+
+function stringToBytes32(s: string): Buffer {
+    return ethjs.setLengthRight(Buffer.from(s), 32);
 }

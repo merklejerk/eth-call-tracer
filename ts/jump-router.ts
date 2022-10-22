@@ -9,8 +9,14 @@ export function createJumpRouterCode(
             if (typeof(op.originalOffset) === 'number') {
                 let to;
                 if (op.offset === undefined) {
-                    to = `::__jump__${op.originalOffset}__`;
-                    op.label = to;
+                    if (!op.label) {
+                        throw new Error(
+                            `Encountered JUMPDEST with empty label` +
+                            ` at ${op.originalOffset} when trying to` +
+                            ` create jump router!`
+                        );
+                    }
+                    to = op.label;
                 } else {
                     to = op.offset;
                 }
@@ -34,7 +40,7 @@ export function createJumpRouterCode(
             { opcode: OPCODES.EQ },
             // to, from == jumpdest, jumpdest
             { opcode: OPCODES.PUSH3, payload: to },
-            // jumpdest ???
+            // jumpdest (jumpdest will pop)
             { opcode: OPCODES.JUMPI },
         );
     }

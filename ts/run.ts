@@ -122,7 +122,6 @@ async function getPatchedContractOverridesAsync(
             .map(bytecode => patchBytecodeAsync(bytecode, patchOpts)),
         )).map((b, i) => ({ [addresses[i]]: { code: b } })),
     );
-    console.log(r[addresses[0]].code);
     return r;
 }
 

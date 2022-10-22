@@ -1,5 +1,6 @@
 import * as crypto from 'crypto';
 import * as fs from 'fs/promises';
+import * as ethjs from 'ethereumjs-util';
 
 export const OPCODES = {
     CALL: 0xF1,
@@ -85,7 +86,7 @@ const PUSH_PARAM_REGEXES = [
 
 export interface Instruction {
     opcode: number;
-    payload?: Buffer | string | number;
+    payload?: Buffer | number[] | string | number;
     label?: string;
     originalOffset?: number;
     offset?: number;
@@ -93,7 +94,7 @@ export interface Instruction {
 }
 
 export async function parseAsmFileAsync(file, env={}): Promise<Instruction[]> {
-    return parseAsm(await fs.readFile(file, { encoding: 'utf-8' }));
+    return parseAsm(await fs.readFile(file, { encoding: 'utf-8' }), env);
 }
 
 export function parseAsm(asm, env={}): Instruction[] {
@@ -124,9 +125,13 @@ export function parseAsm(asm, env={}): Instruction[] {
             if (!PUSH_PARAM_REGEXES.some(r => r.test(words[1]))) {
                 throw new Error(`Invalid PUSH param: ${words[1]}`);
             }
-            const rawPayload = words[1].startsWith('$')
-                ? env[words[1].slice(1)]
-                : words[1];
+            let rawPayload = words[1];
+            if (words[1].startsWith('$')) {
+                rawPayload = env[words[1].slice(1)];
+                if (rawPayload === undefined) {
+                    throw new Error(`Encountered undefined asm variable: ${words[1]}`);
+                }
+            }
             if (rawPayload === 'undefined') {
                 throw new Error(`Missing asm reference: ${words[1]}`);
             }
@@ -184,15 +189,15 @@ export function parseBytecode(bytecode: number[] | Buffer): Instruction[] {
                 break;
             default:
                 if (currentScopeId) {
-                    const n = getOpcodeSize(op);
+                    const n = getOpcodePayloadSize(op);
                     const instruction: Instruction = {
                         opcode: op,
                         scopeId: currentScopeId,
                         originalOffset: i,
                     };
                     if (n > 0) {
-                        const end = Math.min(bytecode.length, i + n + 1);
-                        instruction.payload = parsePayload(bytecode.slice(i + 1, end), n - 1);
+                        const end = Math.min(bytecode.length, i + 1 + n);
+                        instruction.payload = bytecode.slice(i + 1, end);
                     }
                     i += n;
                     instructions.push(instruction);
@@ -263,8 +268,7 @@ export function serializeCode(
         if (p.offset === undefined) {
             throw new Error(`Encountered uncommitted instruction`);
         }
-        const s = getOpcodeSize(p.opcode);
-        buf.writeUint8(p.opcode, p.offset);
+        buf.writeUint8(p.opcode, commitOffset + p.offset);
         const payloadSize = getOpcodePayloadSize(p.opcode);
         if (p.payload && payloadSize != 0) {
             parsePayload(p.payload, payloadSize).copy(buf, commitOffset + p.offset + 1);
@@ -318,10 +322,7 @@ export function linkCodes(...codes: Instruction[][]): void {
                     if (!label || !(label in scopedLabelMap)) {
                         throw new Error(`label ${label} not found in scope`);
                     }
-                    p.payload = parsePayload(
-                        scopedLabelMap[label],
-                        getOpcodePayloadSize(p.opcode),
-                    );
+                    p.payload = scopedLabelMap[label];
                 }
             }
         }
@@ -340,12 +341,24 @@ function parsePayload(
         payload.copy(buf);
         return buf;
     }
-    if (typeof(payload) === 'number' || typeof(payload) === 'string') {
-        return Buffer.from(BigInt(payload).toString(16), 'hex');
+    if (typeof(payload) === 'string') {
+        if (payload.startsWith('0x')) {
+            return ethjs.setLengthLeft(payload, size);
+        }
+        return ethjs.setLengthLeft(
+            Buffer.from(BigInt(payload).toString(16), 'hex'),
+            size,
+        );
+    }
+    if (typeof(payload) === 'number') {
+        return ethjs.setLengthLeft(payload, size);
+    }
+    if (payload.length !== size) {
+        throw new Error(`Invalid payload size. Expected ${size} but got ${payload.length}`);
     }
     const buf = Buffer.alloc(size);
     for (let i = 0; i < payload.length; ++i) {
-        buf.writeInt8(payload[i], i);
+        buf.writeUint8(payload[i], i);
     }
     return buf;
 }
