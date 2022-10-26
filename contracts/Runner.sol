@@ -93,7 +93,7 @@ contract SpyHooks {
         address payable to,
         uint256 value,
         bytes memory data
-    ) external returns (bool success, bytes memory resultData, uint256 gasUsed) {
+    ) external payable returns (bool success, bytes memory resultData, uint256 gasUsed) {
         assembly {
             switch callType
             case 0 { // CallType.Call
@@ -146,7 +146,7 @@ contract SpyHooks {
         bytes32 topic3,
         bytes32 topic4,
         bytes memory data
-    ) external returns (uint256 gasUsed) {
+    ) external payable returns (uint256 gasUsed) {
         if (numTopics == 0) {
             assembly {
                 gasUsed := gas()
@@ -192,7 +192,7 @@ contract SpyHooks {
     function handleSpySstore(
         uint256 slot,
         bytes32 value
-    ) external returns (uint256 gasUsed) {
+    ) external payable returns (uint256 gasUsed) {
         bytes32 oldValue;
         assembly {
             oldValue := sload(slot)

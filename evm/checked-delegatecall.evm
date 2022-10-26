@@ -13,7 +13,7 @@ SWAP2
 PUSH2 $SCRATCH_MEM_LOC
 // target, argOffset, argSize, retOffset, retSize, jumpback
 PUSH20 $HOOKS_CONTRACT_ADDRESS
-// gas, target, argOffset, argSize, retOffset, retSizejumpback
+// gas, target, argOffset, argSize, retOffset, retSize, jumpback
 GAS
 // success, jumpback
 DELEGATECALL

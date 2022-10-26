@@ -164,7 +164,6 @@ export async function patchBytecodeAsync(
     }
     // Write the jump router.
     serializeCode(outBuf, jumpRouterCode);
-
     return ethjs.bufferToHex(outBuf);
 }
 

@@ -24,6 +24,7 @@ export const OPCODES = {
     DUP7: 0x86,
     DUP8: 0x87,
     CODESIZE: 0x38,
+    EXTCODESIZE: 0x3B,
     CODECOPY: 0x39,
     STOP: 0x00,
     INVALID: 0xFE,
@@ -346,7 +347,7 @@ function parsePayload(
             return ethjs.setLengthLeft(payload, size);
         }
         return ethjs.setLengthLeft(
-            Buffer.from(BigInt(payload).toString(16), 'hex'),
+            '0x' + BigInt(payload).toString(16),
             size,
         );
     }

@@ -4,8 +4,12 @@ JUMPDEST
 // numTopics, jumpback, dataOffset, dataSize, ...
 SWAP1
 // Encode a delegatecall to handleSpyLog()
-// selector, numTopics, jumpback, dataOffset, dataSize, ...
-PUSH32 $HANDLE_SPY_LOG_SELECTOR
+// selector(4), numTopics, jumpback, dataOffset, dataSize, ...
+PUSH4 $HANDLE_SPY_LOG_SELECTOR
+// 224, selector(4), numTopics, jumpback, dataOffset, dataSize, ...
+PUSH1 224
+// selector(32), numTopics, jumpback, dataOffset, dataSize, ...
+SHL
 // ptr, selector, numTopics, jumpback, dataOffset, dataSize, ...
 PUSH2 $SCRATCH_MEM_LOC
 // numTopics, jumpback, dataOffset, dataSize, ...
@@ -25,19 +29,24 @@ MSTORE // Store numTopics
 PUSH1 0
 PUSH1 0x24
 PUSH2 $SCRATCH_MEM_LOC
+ADD
 MSTORE
 PUSH1 0
 PUSH1 0x44
 PUSH2 $SCRATCH_MEM_LOC
+ADD
 MSTORE
 PUSH1 0
 PUSH1 0x64
 PUSH2 $SCRATCH_MEM_LOC
+ADD
 MSTORE
 PUSH1 0
 PUSH1 0x84
 PUSH2 $SCRATCH_MEM_LOC
+ADD
 MSTORE
+
 
 // i=0, numTopics, jumpback, dataOffset, dataSize, ...
 PUSH1 0
@@ -192,6 +201,7 @@ SWAP2
 POP
 // argSize, jumpback
 POP
+
 // ::checked-delegatecall, argSize jumpback
 PUSH3 ::checked-delegatecall
 // argSize, jumpback
