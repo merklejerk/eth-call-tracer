@@ -114,14 +114,9 @@ async function getPatchedContractOverridesAsync(
         ...Object
             .entries(bytecodes)
             .filter(([a, b]) => b !== '0x')
-            // .filter(([a, b]) => a === '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2')
-            // .filter(([a, b]) => a === '0x7a250d5630b4cf539739df2c5dacb4c659f2488d')
-            // .filter(([a, b]) => a === '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48')
-            // .filter(([a, b]) => a === '0xa2327a938febf5fec13bacfb16ae10ecbc4cbdcf')
             .map(([a, b]) => ({ [a]: b })),
     );
     addresses = Object.keys(bytecodes);
-    console.log(addresses);
     const r = Object.assign(
         {},
         ...(await Promise.all(
