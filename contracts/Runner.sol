@@ -62,6 +62,7 @@ contract Spy {
         uint256 gasUsed;
     }
 
+    uint256 private _nextHookIndex;
     Spy_CALL[] internal spy_calls;
     Spy_SLOAD[] internal spy_sloads;
     Spy_SSTORE[] internal spy_sstores;
@@ -80,6 +81,10 @@ contract Spy {
 
     function onSpyLog(Spy_LOG memory spied) external virtual {
         spy_logs.push(spied);
+    }
+
+    function consumeNextHookIndex() external returns (uint256) {
+        return _nextHookIndex++;
     }
 }
 
@@ -120,7 +125,7 @@ contract SpyHooks {
             returndatacopy(add(resultData, 0x20), 0, returndatasize())
         }
         SPY.onSpyCall(Spy.Spy_CALL({
-            index: _consumeNextHookIndex(),
+            index: SPY.consumeNextHookIndex(),
             context: address(this),
             callType: callType,
             to: to,
@@ -179,7 +184,7 @@ contract SpyHooks {
             }
         }
         SPY.onSpyLog(Spy.Spy_LOG({
-            index: _consumeNextHookIndex(),
+            index: SPY.consumeNextHookIndex(),
             context: address(this),
             numTopics: numTopics,
             topics: [topic1, topic2, topic3, topic4],
@@ -201,22 +206,12 @@ contract SpyHooks {
             gasUsed := sub(sub(gas(), gasUsed), SSTORE_GAS_OVERHEAD)
         }
         SPY.onSpySstore(Spy.Spy_SSTORE({
-            index: _consumeNextHookIndex(),
+            index: SPY.consumeNextHookIndex(),
             context: address(this),
             slot: slot,
             oldValue: oldValue,
             value: value
         }));
-    }
-
-    function _consumeNextHookIndex() private returns (uint256 idx) {
-        assembly {
-            mstore(0x00, address())
-            mstore(0x20, origin())
-            let slot := keccak256(0x00, 0x40)
-            idx := sload(slot)
-            sstore(slot, add(idx, 1))
-        }
     }
 }
 
