@@ -1,3 +1,4 @@
+import { randomBytes } from "crypto";
 import { Instruction, OPCODES } from "./evm-compiler";
 
 export function createJumpRouterCode(
@@ -31,6 +32,7 @@ export function createJumpRouterCode(
         },
     ];
     for (const [from, to] of Object.entries(remaps)) {
+        const skipLabel = `:__skip-${randomBytes(8).toString('hex')}`
         code.push(
             // jumpdest, jumpdest
             { opcode: OPCODES.DUP1 },
@@ -38,12 +40,23 @@ export function createJumpRouterCode(
             { opcode: OPCODES.PUSH3, payload: Number(from) },
             // from == jumpdest, jumpdest
             { opcode: OPCODES.EQ },
-            // to, from == jumpdest, jumpdest
-            { opcode: OPCODES.PUSH3, payload: to },
-            // jumpdest (jumpdest will pop)
+            // from != jumpdest, jumpdest
+            { opcode: OPCODES.ISZERO },
+            // :skipLabel, from != jumpdest, jumpdest
+            { opcode: OPCODES.PUSH3, payload: skipLabel },
+            // jumpdest
             { opcode: OPCODES.JUMPI },
+            { opcode: OPCODES.POP },
+            // to
+            { opcode: OPCODES.PUSH3, payload: to },
+            { opcode: OPCODES.JUMP },
+            // jumpdest
+            { opcode: OPCODES.JUMPDEST, label: skipLabel }
         );
     }
-    code.push({ opcode: OPCODES.JUMP });
+    code.push({ opcode: OPCODES.INVALID });
+    for (const o of code) {
+        o.scopeId = '__JUMP_ROUTER__';
+    }
     return code;
 }

@@ -120,7 +120,7 @@ contract SpyHooks {
             returndatacopy(add(resultData, 0x20), 0, returndatasize())
         }
         SPY.onSpyCall(Spy.Spy_CALL({
-            index: 0, // TBD
+            index: _consumeNextHookIndex(),
             context: address(this),
             callType: callType,
             to: to,
@@ -179,7 +179,7 @@ contract SpyHooks {
             }
         }
         SPY.onSpyLog(Spy.Spy_LOG({
-            index: 0, // TBD
+            index: _consumeNextHookIndex(),
             context: address(this),
             numTopics: numTopics,
             topics: [topic1, topic2, topic3, topic4],
@@ -201,12 +201,22 @@ contract SpyHooks {
             gasUsed := sub(sub(gas(), gasUsed), SSTORE_GAS_OVERHEAD)
         }
         SPY.onSpySstore(Spy.Spy_SSTORE({
-            index: 0, // TBD
+            index: _consumeNextHookIndex(),
             context: address(this),
             slot: slot,
             oldValue: oldValue,
             value: value
         }));
+    }
+
+    function _consumeNextHookIndex() private returns (uint256 idx) {
+        assembly {
+            mstore(0x00, address())
+            mstore(0x20, origin())
+            let slot := keccak256(0x00, 0x40)
+            idx := sload(slot)
+            sstore(slot, add(idx, 1))
+        }
     }
 }
 

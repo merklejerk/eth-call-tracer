@@ -69,6 +69,7 @@ export const OPCODES = {
     LOG2: 0xA2,
     LOG3: 0xA3,
     LOG4: 0xA4,
+    DATA: -1,
 }
 
 const VALID_PUSH_COMMANDS = Object.assign(
@@ -161,47 +162,56 @@ export function randomId(): string {
 
 export function parseBytecode(bytecode: number[] | Buffer): Instruction[] {
     const instructions = [] as Instruction[];
+    let currentBlock = [];
     let currentScopeId = randomId();
     for (let i = 0; i < bytecode.length; ++i) {
         const op = bytecode[i];
+        const inst = {
+            opcode: op,
+            scopeId: currentScopeId,
+            originalOffset: i,
+        } as Instruction;
         switch (op) {
             case OPCODES.JUMPDEST:
-                currentScopeId = randomId();
-                instructions.push({
-                   opcode: op,
-                   scopeId: currentScopeId,
-                   originalOffset: i,
-                });
+                if (!currentScopeId) {
+                    inst.scopeId = currentScopeId = randomId();
+                }
+                currentBlock.push(inst);
                 break;
-            // TODO: check for unregistered opcodes and close block.
-            //       Maybe also JUMPs?
+            // TODO: check for unregistered opcodes and currentBlock block.
+            case OPCODES.JUMP:
             case OPCODES.INVALID:
             case OPCODES.SELFDESTRUCT:
             case OPCODES.STOP:
             case OPCODES.REVERT:
             case OPCODES.RETURN:
                 if (currentScopeId) {
-                    instructions.push({
-                        opcode: op,
-                        scopeId: currentScopeId,
-                        originalOffset: i,
-                    });
-                } 
+                    currentBlock.push(inst);
+                    instructions.push(...currentBlock);
+                    currentBlock = [];
+                    currentScopeId = undefined;
+                }
                 break;
             default:
                 if (currentScopeId) {
                     const n = getOpcodePayloadSize(op);
-                    const instruction: Instruction = {
-                        opcode: op,
-                        scopeId: currentScopeId,
-                        originalOffset: i,
-                    };
                     if (n > 0) {
-                        const end = Math.min(bytecode.length, i + 1 + n);
-                        instruction.payload = bytecode.slice(i + 1, end);
+                        if (bytecode.length < i + 1 + n) {
+                            console.log(`illegal payload size`);
+                            // Payload doesn't exist.
+                            // Abort the currentBlock block.
+                            currentBlock = [];
+                            currentScopeId = undefined;
+                            break;
+                        }
+                        inst.payload = bytecode.slice(i + 1, i + 1 + n);
                     }
                     i += n;
-                    instructions.push(instruction);
+                    currentBlock.push(inst);
+                } else {
+                    // No scope ID means we've hit the end of the code and are in
+                    // the data section. Stop decompiling.
+                    i = bytecode.length - 1;
                 }
                 break;
         }
@@ -225,7 +235,14 @@ export function getOpcodeSize(opcode: number): number {
 }
 
 export function getCodeSize(instructions: Instruction[]): number {
-    return instructions.reduce((a, op) => a + getOpcodeSize(op.opcode), 0);
+    return instructions.reduce((a, op) => a + getInstructionSize(op), 0);
+}
+
+export function getInstructionSize(instruction: Instruction): number {
+    if (instruction.opcode === OPCODES.DATA) {
+        return (instruction.payload as Buffer).length;
+    }
+    return getOpcodeSize(instruction.opcode);
 }
 
 export function commitCode(
@@ -243,7 +260,7 @@ export function commitCode(
     }
     for (let i = 0; i < instructionsCount; ++i) {
         const p = instructions[i + instructionsStart];
-        const s = getOpcodeSize(p.opcode);
+        const s = getInstructionSize(p);
         p.offset = commitOffset;
         commitOffset += s;
     }
@@ -269,10 +286,17 @@ export function serializeCode(
         if (p.offset === undefined) {
             throw new Error(`Encountered uncommitted instruction`);
         }
-        buf.writeUint8(p.opcode, commitOffset + p.offset);
-        const payloadSize = getOpcodePayloadSize(p.opcode);
-        if (p.payload && payloadSize != 0) {
-            parsePayload(p.payload, payloadSize).copy(buf, commitOffset + p.offset + 1);
+        if (p.opcode === OPCODES.DATA) {
+            (p.payload as Buffer).copy(buf, commitOffset + p.offset);
+        } else {
+            buf.writeUint8(p.opcode, commitOffset + p.offset);
+            const payloadSize = getOpcodePayloadSize(p.opcode);
+            if (p.payload && payloadSize != 0) {
+                parsePayload(p.payload, payloadSize).copy(
+                    buf,
+                    commitOffset + p.offset + 1
+                );
+            }
         }
     }
 }

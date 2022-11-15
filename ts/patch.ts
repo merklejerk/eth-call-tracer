@@ -28,6 +28,7 @@ enum PatchFragments {
     LogPatch = 'log-patch',
     SStorePatch = 'sstore-patch',
     CodeCopyPatch = 'codecopy-patch',
+    StaticcallPatch = 'staticcall-patch',
 }
 enum LibFragments {
     CheckedDegateCall = 'checked-delegatecall',
@@ -67,7 +68,8 @@ export async function patchBytecodeAsync(
         // Prepend a JUMPDEST for the preamble to jump to.
         { opcode: OPCODES.JUMPDEST, label: '::runtime' },
     ];
-    for (const op of parseBytecode(bytecodeBuf)) {
+    const ops = parseBytecode(bytecodeBuf);
+    for (const [i, op] of ops.entries()) {
         switch (op.opcode) {
             case OPCODES.PC:
                 // Replace with PUSH3 originalOffset
@@ -91,19 +93,21 @@ export async function patchBytecodeAsync(
                 break;
             case OPCODES.ORIGIN:
                 // PUSH20 fake origin.
-                runtimeCode.push({ opcode: OPCODES.PUSH20, payload: origin });
+                runtimeCode.push({ opcode: OPCODES.PUSH20, payload: opts.origin });
+                break;
+            case OPCODES.JUMPDEST:
+                // Assign a global label.
+                runtimeCode.push(
+                    { ...op, label: `::__jump__${op.originalOffset}__` },
+                );
+                break;
+            case OPCODES.STATICCALL:
+                // Replace with staticcall patch
+                runtimeCode.push(...dupeCode(fragments[PatchFragments.StaticcallPatch]));
                 break;
             case OPCODES.SSTORE:
                 // Replace with sstore patch.
                 runtimeCode.push(...dupeCode(fragments[PatchFragments.SStorePatch]));
-                break;
-            case OPCODES.JUMPDEST:
-                // Assign a global label and pop off the top item on the stack
-                // so it works with the jump router.
-                runtimeCode.push(
-                    { ...op, label: `::__jump__${op.originalOffset}__` },
-                    { opcode: OPCODES.POP },
-                );
                 break;
             case OPCODES.LOG0:
             case OPCODES.LOG1:
@@ -133,6 +137,9 @@ export async function patchBytecodeAsync(
     // We will write the original bytecode immediately after the preamble,
     // so skip past it for now.
     bufOffset += bytecodeBuf.length;
+    // Add 32 zero bytes before the patched runtime code to eat up any metadata that
+    // might get interpreted as PUSH payloads.
+    bufOffset += 32;
     // Commit the runtime code.
     bufOffset += commitCode(runtimeCode, bufOffset);
     // Commit lib fragments.

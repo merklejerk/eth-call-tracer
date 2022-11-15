@@ -1,0 +1,8 @@
+// gas, address, argOffset, argSize, retOffset, retSize
+// value=0, gas, address, argOffset, argSize, retOffset, retSize
+PUSH1 0
+// address, gas, value=0, argOffset, argSize, retOffset, retSize
+SWAP2
+// gas, address, value=0, argOffset, argSize, retOffset, retSize
+SWAP1
+CALL

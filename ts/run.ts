@@ -57,6 +57,7 @@ async function run(argv): Promise<void> {
         },
     ).call(
         {
+            block: argv.block || undefined,
             overrides: {
                 [argv.from]: { code: ORIGIN_ARTIFACT.deployedBytecode.object },
                 [runner.address]: { code: RUNNER_ARTIFACT.deployedBytecode.object },
@@ -70,6 +71,7 @@ async function run(argv): Promise<void> {
                         gas: argv.gas,
                         gasPrice: gasPrice,
                         data: argv.data,
+                        block: argv.block || undefined,
                     },
                     {
                         hooksAddress: HOOKS_ADDRESS,
@@ -89,6 +91,7 @@ interface TxParams {
     data: string;
     gas: number;
     gasPrice: string | number;
+    block?: number;
 }
 
 async function getPatchedContractOverridesAsync(
@@ -97,7 +100,7 @@ async function getPatchedContractOverridesAsync(
     patchOpts: PatchOptions,
 ): Promise<{ [address: string]: { code: string } }> {
     let addresses = Object.keys(Object.assign(
-        {},
+        { [txParams.to]: true },
         ...(await getAccessListAsync(eth, txParams))
             .map(e => ({[e.address]: true })),
     ));
@@ -111,9 +114,14 @@ async function getPatchedContractOverridesAsync(
         ...Object
             .entries(bytecodes)
             .filter(([a, b]) => b !== '0x')
+            // .filter(([a, b]) => a === '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2')
+            // .filter(([a, b]) => a === '0x7a250d5630b4cf539739df2c5dacb4c659f2488d')
+            // .filter(([a, b]) => a === '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48')
+            // .filter(([a, b]) => a === '0xa2327a938febf5fec13bacfb16ae10ecbc4cbdcf')
             .map(([a, b]) => ({ [a]: b })),
     );
     addresses = Object.keys(bytecodes);
+    console.log(addresses);
     const r = Object.assign(
         {},
         ...(await Promise.all(
@@ -122,6 +130,7 @@ async function getPatchedContractOverridesAsync(
             .map(bytecode => patchBytecodeAsync(bytecode, patchOpts)),
         )).map((b, i) => ({ [addresses[i]]: { code: b } })),
     );
+    // console.log(r[txParams.to].code);
     return r;
 }
 
@@ -136,7 +145,9 @@ async function getAccessListAsync(eth: FlexEther, txParams: TxParams)
             gasPrice: toHex(txParams.gasPrice),
             value: toHex(txParams.value),
             data: txParams.data,
+            block: txParams.block || undefined, 
         },
+        ...(txParams.block ? [toHex(txParams.block)] : []),
     ]);
     return r.accessList;
 }
