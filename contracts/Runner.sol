@@ -119,7 +119,7 @@ contract SpyHooks {
                 gasUsed := gas()
                 success := callcode(gas_, to, value, add(data, 0x20), mload(data), 0, 0)
             }
-            gasUsed := sub(sub(gas(), gasUsed), CALL_GAS_OVERHEAD)
+            gasUsed := sub(sub(gasUsed, gas()), CALL_GAS_OVERHEAD)
             resultData := mload(0x40)
             mstore(0x40, add(resultData, add(returndatasize(), 0x20)))
             mstore(resultData, returndatasize())
