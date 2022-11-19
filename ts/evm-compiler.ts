@@ -55,6 +55,8 @@ export const OPCODES = {
     MSTORE: 0x52,
     MSTORE8: 0x53,
     AND: 0x16,
+    OR: 0x17,
+    NOT: 0x19,
     GAS: 0x5A,
     ORIGIN: 0x32,
     JUMPDEST: 0x5B,
@@ -69,6 +71,8 @@ export const OPCODES = {
     LOG2: 0xA2,
     LOG3: 0xA3,
     LOG4: 0xA4,
+    RETURNDATACOPY: 0x3E,
+    RETURNDATASIZE: 0x3D,
     DATA: -1,
 }
 

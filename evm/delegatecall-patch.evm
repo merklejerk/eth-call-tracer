@@ -1,0 +1,18 @@
+// gas, address, argOffset, argSize, retOffset, retSize
+// value=0, gas, address, argOffset, argSize, retOffset, retSize
+PUSH1 0
+// address, gas, value, argOffset, argSize, retOffset, retSize
+SWAP2
+// gas, address, value, argOffset, argSize, retOffset, retSize
+SWAP1
+// 2 (CallType.Delegate), gas, address, value, argOffset, argSize, retOffset, retSize
+PUSH1 2
+// :jumpback, 2 (CallType.Delegate), gas, address, value, argOffset, argSize, retOffset, retSize
+PUSH3 :jumpback
+// ::call-hook, :jumpback, 2 (CallType.Delegate), gas, address, value, argOffset, argSize, retOffset, retSize
+PUSH3 ::call-hook
+// :jumpback, 2 (CallType.Delegate), gas, address, value, argOffset, argSize, retOffset, retSize
+JUMP
+// success
+:jumpback
+JUMPDEST

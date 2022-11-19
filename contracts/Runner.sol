@@ -62,7 +62,7 @@ contract Spy {
         uint256 gasUsed;
     }
 
-    uint256 private _nextHookIndex;
+    uint256 public nextHookIndex;
     Spy_CALL[] internal spy_calls;
     Spy_SLOAD[] internal spy_sloads;
     Spy_SSTORE[] internal spy_sstores;
@@ -84,7 +84,7 @@ contract Spy {
     }
 
     function consumeNextHookIndex() external returns (uint256) {
-        return _nextHookIndex++;
+        return nextHookIndex++;
     }
 }
 
@@ -99,6 +99,7 @@ contract SpyHooks {
         uint256 value,
         bytes memory data
     ) external payable returns (bool success, bytes memory resultData, uint256 gasUsed) {
+        uint256 idx = SPY.consumeNextHookIndex();
         assembly {
             switch callType
             case 0 { // CallType.Call
@@ -107,12 +108,12 @@ contract SpyHooks {
             }
             case 1 { // CallType.Static
                 gasUsed := gas()
-                success := staticcall(gas_, to, add(data, 0x20), mload(data), 0, 0)
+                // Must use call or else nested hooked calls will fail.
+                success := call(gas_, to, value, add(data, 0x20), mload(data), 0, 0)
             }
             case 2 { // CallType.Delegate
                 gasUsed := gas()
                 success := delegatecall(gas_, to, add(data, 0x20), mload(data), 0, 0)
-                
             }
             default { // case CallType.Code (3)
                 gasUsed := gas()
@@ -125,7 +126,7 @@ contract SpyHooks {
             returndatacopy(add(resultData, 0x20), 0, returndatasize())
         }
         SPY.onSpyCall(Spy.Spy_CALL({
-            index: SPY.consumeNextHookIndex(),
+            index: idx,
             context: address(this),
             callType: callType,
             to: to,
