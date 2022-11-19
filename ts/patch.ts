@@ -20,7 +20,8 @@ export interface PatchOptions {
     origin: string;
 }
 
-const SCRATCH_MEM_LOC = 0x8080;
+const SCRATCH_MEM_LOC = 0x8000;
+const FAKE_RETURNDATA_MEM_LOC = 0xA000;
 enum PatchFragments {
     Preamble = 'preamble',
     JumpPatch = 'jump-patch',
@@ -29,11 +30,18 @@ enum PatchFragments {
     SStorePatch = 'sstore-patch',
     CodeCopyPatch = 'codecopy-patch',
     StaticcallPatch = 'staticcall-patch',
+    CallPatch = 'call-patch',
+    DelegateCallPatch = 'delegatecall-patch',
+    CallCodePatch = 'callcode-patch',
+    ReturnDataCopyPatch = 'returndatacopy-patch',
+    ReturnDataSizePatch = 'returndatasize-patch',
 }
 enum LibFragments {
     CheckedDegateCall = 'checked-delegatecall',
     LogHook = 'log-hook',
     SstoreHook = 'sstore-hook',
+    CallHook = 'call-hook',
+    ReturnDataCopy = 'returndatacopy',
 }
 type AllFragments = PatchFragments | LibFragments;
 const LIB_FRAGMENT_NAMES = Object.values(LibFragments);
@@ -43,6 +51,7 @@ const ALL_FRAGMENT_NAMES = [
 ];
 const HANDLE_SPY_SSTORE_SELECTOR = findSelector(HOOKS_ARTIFACT, 'handleSpySstore');
 const HANDLE_SPY_LOG_SELECTOR = findSelector(HOOKS_ARTIFACT, 'handleSpyLog');
+const HANDLE_SPY_CALL_SELECTOR = findSelector(HOOKS_ARTIFACT, 'handleSpyCall');
 
 export async function patchBytecodeAsync(
     bytecode: string,
@@ -54,8 +63,10 @@ export async function patchBytecodeAsync(
     const env = {
         'HOOKS_CONTRACT_ADDRESS': opts.hooksAddress,
         'SCRATCH_MEM_LOC': SCRATCH_MEM_LOC,
+        'FAKE_RETURNDATA_MEM_LOC': FAKE_RETURNDATA_MEM_LOC,
         'HANDLE_SPY_SSTORE_SELECTOR': HANDLE_SPY_SSTORE_SELECTOR,
         'HANDLE_SPY_LOG_SELECTOR': HANDLE_SPY_LOG_SELECTOR,
+        'HANDLE_SPY_CALL_SELECTOR': HANDLE_SPY_CALL_SELECTOR,
         'PREAMBLE_SIZE': 5,
         'HOOK_CALL_FAILED_ERROR': stringToBytes32('hook call failed'),
     };
@@ -101,9 +112,29 @@ export async function patchBytecodeAsync(
                     { ...op, label: `::__jump__${op.originalOffset}__` },
                 );
                 break;
+            case OPCODES.RETURNDATASIZE:
+                // Replace with returndatasize patch.
+                runtimeCode.push(...dupeCode(fragments[PatchFragments.ReturnDataSizePatch]));
+                break;
+            case OPCODES.RETURNDATACOPY:
+                // Replace with returndatasize patch.
+                runtimeCode.push(...dupeCode(fragments[PatchFragments.ReturnDataCopyPatch]));
+                break;
             case OPCODES.STATICCALL:
                 // Replace with staticcall patch
                 runtimeCode.push(...dupeCode(fragments[PatchFragments.StaticcallPatch]));
+                break;
+            case OPCODES.CALL:
+                // Replace with call patch
+                runtimeCode.push(...dupeCode(fragments[PatchFragments.CallPatch]));
+                break;
+            case OPCODES.DELEGATECALL:
+                // Replace with delegatecall patch
+                runtimeCode.push(...dupeCode(fragments[PatchFragments.DelegateCallPatch]));
+                break;
+            case OPCODES.CALLCODE:
+                // Replace with callcode patch
+                runtimeCode.push(...dupeCode(fragments[PatchFragments.CallCodePatch]));
                 break;
             case OPCODES.SSTORE:
                 // Replace with sstore patch.

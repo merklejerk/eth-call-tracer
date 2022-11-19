@@ -1,0 +1,252 @@
+::call-hook
+// :jumpback, CallType, gas, address, value, argOffset, argSize, retOffset, retSize
+JUMPDEST
+// Encode a delegatecall to handleSpyCall(CallType,gas, address, value, data)
+
+// Encode selector
+// selector(4), :jumpback, CallType, gas, address, value, argOffset, argSize, retOffset, retSize
+PUSH4 $HANDLE_SPY_CALL_SELECTOR
+// 224, selector(4), :jumpback, CallType, gas, address, value, argOffset, argSize, retOffset, retSize
+PUSH1 224
+// selector(4) << 224, :jumpback, CallType, gas, address, value, argOffset, argSize, retOffset, retSize
+SHL
+// scratch, selector(4) << 224, :jumpback, CallType, gas, address, value, argOffset, argSize, retOffset, retSize
+PUSH2 $SCRATCH_MEM_LOC
+// CallType, gas, address, value, argOffset, argSize, retOffset, retSize
+MSTORE
+
+// Encode CallType
+// CallType, :jumpback, gas, address, value, argOffset, argSize, retOffset, retSize
+SWAP1
+// scratch, CallType, :jumpback, gas, address, value, argOffset, argSize, retOffset, retSize
+PUSH2 $SCRATCH_MEM_LOC
+// 4, scratch, CallType, :jumpback, gas, address, value, argOffset, argSize, retOffset, retSize
+PUSH1 0x04
+// scratch+4, CallType, :jumpback, gas, address, value, argOffset, argSize, retOffset, retSize
+ADD
+// :jumpback, gas, address, value, argOffset, argSize, retOffset, retSize
+MSTORE
+
+// Encode gas
+// gas, :jumpback, address, value, argOffset, argSize, retOffset, retSize
+SWAP1
+// scratch, gas, :jumpback, address, value, argOffset, argSize, retOffset, retSize
+PUSH2 $SCRATCH_MEM_LOC
+// 0x24, scratch, gas, :jumpback, address, value, argOffset, argSize, retOffset, retSize
+PUSH1 0x24
+// scratch+0x24, gas, :jumpback, address, value, argOffset, argSize, retOffset, retSize
+ADD
+// :jumpback, address, value, argOffset, argSize, retOffset, retSize
+MSTORE
+
+// Encode address
+// address, :jumpback, value, argOffset, argSize, retOffset, retSize
+SWAP1
+// scratch, address, :jumpback, value, argOffset, argSize, retOffset, retSize
+PUSH2 $SCRATCH_MEM_LOC
+// 0x44, scratch, address, :jumpback, value, argOffset, argSize, retOffset, retSize
+PUSH1 0x44
+// scratch+0x44, address, :jumpback, value, argOffset, argSize, retOffset, retSize
+ADD
+// :jumpback, value, argOffset, argSize, retOffset, retSize
+MSTORE
+
+// Encode value
+// value, :jumpback argOffset, argSize, retOffset, retSize
+SWAP1
+// scratch, value, :jumpback, argOffset, argSize, retOffset, retSize
+PUSH2 $SCRATCH_MEM_LOC
+// 0x64, scratch, value, :jumpback, argOffset, argSize, retOffset, retSize
+PUSH1 0x64
+// scratch+0x64, value, :jumpback, argOffset, argSize, retOffset, retSize
+ADD
+// :jumpback, argOffset, argSize, retOffset, retSize
+MSTORE
+
+// Encode data offset
+// 0xA0, :jumpback, argOffset, argSize, retOffset, retSize
+PUSH1 0xA0
+// 0x84, 0xA0, :jumpback, argOffset, argSize, retOffset, retSize
+PUSH1 0x84
+// scratch, 0x84, 0xA0, :jumpback, argOffset, argSize, retOffset, retSize
+PUSH2 $SCRATCH_MEM_LOC
+// scratch+0x84, 0xA0, :jumpback, argOffset, argSize, retOffset, retSize
+ADD
+// :jumpback, argOffset, argSize, retOffset, retSize
+MSTORE
+
+// Encode data size
+// argSize, :jumpback, argOffset, argSize, retOffset, retSize
+DUP3
+// 0xA4, argSize, :jumpback, argOffset, argSize, retOffset, retSize
+PUSH1 0xA4
+// scratch, 0xA4, argSize, :jumpback, argOffset, argSize, retOffset, retSize
+PUSH2 $SCRATCH_MEM_LOC
+// scratch+0xA4, argSize, :jumpback, argOffset, argSize, retOffset, retSize
+ADD
+// :jumpback, argOffset, argSize, retOffset, retSize
+MSTORE
+
+// Encode data
+// argSize, argOffset, :jumpback, retOffset, retSize
+SWAP2
+// i=0, argSize, argOffset, :jumpback, retOffset, retSize
+PUSH1 0
+:data-loop
+JUMPDEST
+    // escape
+    // argSize, i, argSize, argOffset, :jumpback, retOffset, retSize
+    DUP2
+    // i, argSize, i, argSize, argOffset, :jumpback, retOffset, retSize
+    DUP2
+    // i < argSize, i, argSize, argOffset, :jumpback, retOffset, retSize
+    LT
+    // i >= argSize, i, argSize, argOffset, :jumpback, retOffset, retSize
+    ISZERO
+    // :data-loop-out, i >= argSize, i, argSize, argOffset, :jumpback, retOffset, retSize
+    PUSH3 :data-loop-out
+    // i, argSize, argOffset, :jumpback, retOffset, retSize
+    JUMPI
+
+    // copy word of data
+    // i, i, argSize, argOffset, :jumpback, retOffset, retSize
+    DUP1
+    // argOffset, i, i, argSize, argOffset, :jumpback, retOffset, retSize
+    DUP4
+    // argOffset+i, i, argSize, argOffset, :jumpback, retOffset, retSize
+    ADD
+    // dataWord, i, argSize, argOffset, :jumpback, retOffset, retSize
+    MLOAD
+    // scratch, dataWord, i, argSize, argOffset, :jumpback, retOffset, retSize
+    PUSH2 $SCRATCH_MEM_LOC
+    // 0xC4, scratch, dataWord, i, argSize, argOffset, :jumpback, retOffset, retSize
+    PUSH1 0xC4
+    // scratch+0xC4, dataWord, i, argSize, argOffset, :jumpback, retOffset, retSize
+    ADD
+    // i, scratch+0xC4, dataWord, i, argSize, argOffset, :jumpback, retOffset, retSize
+    DUP3
+    // scratch+0xC4+i, dataWord, i, argSize, argOffset, :jumpback, retOffset, retSize
+    ADD
+    // i, argSize, argOffset, :jumpback, retOffset, retSize
+    MSTORE
+
+    // i += 32
+    // 0x20, i, argSize, argOffset, :jumpback, retOffset, retSize
+    PUSH1 0x20
+    // i+0x20, argSize, argOffset, :jumpback, retOffset, retSize
+    ADD
+
+    // re-loop
+    // :data-loop, i, argSize, argOffset, :jumpback, retOffset, retSize
+    PUSH3 :data-loop
+    // i, argSize, argOffset, :jumpback, retOffset, retSize
+    JUMP
+:data-loop-out
+// i, argSize, argOffset, :jumpback, retOffset, retSize
+JUMPDEST
+// argSize, argOffset, :jumpback, retOffset, retSize
+POP
+// argOffset, argSize, :jumpback, retOffset, retSize
+SWAP1
+// argSize, :jumpback, retOffset, retSize
+POP
+
+// Compute call data size
+// 0xC4, argSize, :jumpback, retOffset, retSize
+PUSH1 0xC4
+// callDataSize=argSize+0xC4, :jumpback, retOffset, retSize
+ADD
+
+// perform checked delegatecall
+// :after-call, callDataSize, :jumpback, retOffset, retSize
+PUSH3 :after-call
+// callDataSize, :after-call, :jumpback, retOffset, retSize
+SWAP1
+// ::checked-delegatecall, callDataSize, :after-call, :jumpback, retOffset, retSize
+PUSH3 ::checked-delegatecall
+// callDataSize, :after-call, :jumpback, retOffset, retSize
+JUMP
+:after-call
+// :jumpback, retOffset, retSize
+JUMPDEST
+
+// Return data will be encoded as:
+// | 0x00 - 0x20          | `bool success`              |
+// | 0x20 - 0x40          | `bytes resultData` (offset) |
+// | 0x40 - 0x60          | `uint256 gasUsed`           |
+// | offset - offset+0x20 | `resultData` length         |
+// | offset+0x20 - offset+0x20+resultData.length | `resultData` data |
+
+// decode call result offset
+// 0x20, :jumpback, retOffset, retSize
+PUSH1 0x20
+// 0x20, 0x20, :jumpback, retOffset, retSize
+DUP1
+// scratch, 0x20, 0x20, :jumpback, retOffset, retSize
+PUSH2 $SCRATCH_MEM_LOC
+// :jumpback, retOffset, retSize
+RETURNDATACOPY
+// scratch, :jumpback, retOffset, retSize
+PUSH2 $SCRATCH_MEM_LOC
+// resultDataOffset, :jumpback, retOffset, retSize
+MLOAD
+
+// decode call result length and copy to fake return data location
+// 0x20, resultDataOffset, :jumpback, retOffset, retSize
+PUSH1 0x20
+// resultDataOffset, 0x20, resultDataOffset, :jumpback, retOffset, retSize
+DUP2
+// scratch, resultDataOffset, 0x20, resultDataOffset, :jumpback, retOffset, retSize
+PUSH2 $FAKE_RETURNDATA_MEM_LOC
+// resultDataOffset, :jumpback, retOffset, retSize
+RETURNDATACOPY
+// scratch, resultDataOffset, :jumpback, retOffset, retSize
+PUSH2 $FAKE_RETURNDATA_MEM_LOC
+// resultDataLength, resultDataOffset, :jumpback, retOffset, retSize
+MLOAD
+
+// copy call result length and data to fake returndatasize buf
+// resultDataOffset, resultDataLength, :jumpback, retOffset, retSize
+SWAP1
+// 0x20, resultDataOffset, resultDataLength, :jumpback, retOffset, retSize
+PUSH1 0x20
+// resultDataOffset+0x20, resultDataLength, :jumpback, retOffset, retSize
+ADD
+// fakeReturnData, resultDataOffset+0x20, resultDataLength, :jumpback, retOffset, retSize
+PUSH2 $FAKE_RETURNDATA_MEM_LOC
+// 0x20, fakeReturnData, resultDataOffset+0x20, resultDataLength, :jumpback, retOffset, retSize
+PUSH1 0x20
+// fakeReturnData+0x20, resultDataOffset+0x20, resultDataLength, :jumpback, retOffset, retSize
+ADD
+// :jumpback, retOffset, retSize
+RETURNDATACOPY
+
+// decode success return value
+// 0x20, :jumpback, retOffset, retSize
+PUSH1 0x20
+// 0x00, 0x20, :jumpback, retOffset, retSize
+PUSH1 0x00
+// scratch, 0x00, 0x20, :jumpback, retOffset, retSize
+PUSH2 $SCRATCH_MEM_LOC
+// :jumpback, retOffset, retSize
+RETURNDATACOPY
+// scratch, :jumpback, retOffset, retSize
+PUSH2 $SCRATCH_MEM_LOC
+// success, :jumpback, retOffset, retSize
+MLOAD
+
+// Use the returndatacopy override to copy to retOffset
+// retSize, :jumpback, retOffset, success
+SWAP3
+// :jumpback, retSize, retOffset, success
+SWAP1
+// retOffset, retSize, :jumpback, success
+SWAP2
+// 0x00, retOffset, retSize, :jumpback, success
+PUSH1 0x00
+// retOffset, 0x00, retSize, :jumpback, success
+SWAP1
+// ::returndatacopy, retOffset, 0x00, retSize, :jumpback, success
+PUSH3 ::returndatacopy
+// retOffset, 0x00, retSize, :jumpback, success
+JUMP

@@ -1,0 +1,184 @@
+// dst, off, size, :jumpback
+::returndatacopy
+JUMPDEST
+
+// Read the fake return data length.
+// fakeReturnData, dst, off, size, :jumpback
+PUSH2 $FAKE_RETURNDATA_MEM_LOC
+// fakeReturnData, fakeReturnData, dst, off, size, :jumpback
+DUP1
+// fakeReturnDataLength, fakeReturnData, dst, off, size, :jumpback
+MLOAD // first word is length
+
+// Compute fakeReturnDataStart and fakeReturnDataEnd
+// fakeReturnData, fakeReturnDataLength, dst, off, size, :jumpback
+SWAP1
+// 0x20, fakeReturnData, fakeReturnDataLength, dst, off, size, :jumpback
+PUSH1 0x20
+// fakeReturnDataStart=fakeReturnData+0x20, fakeReturnDataLength, dst, off, size, :jumpback
+ADD
+// fakeReturnDataStart, fakeReturnDataStart, fakeReturnDataLength, dst, off, size, :jumpback
+DUP1
+// fakeReturnDataLength, fakeReturnDataStart, fakeReturnDataStart, dst, off, size, :jumpback
+SWAP2
+// fakeReturnDataEnd=fakeReturnDataStart+fakeReturnDataLength, fakeReturnDataStart, dst, off, size, :jumpback
+ADD
+
+// Compute fakeReturnDataCopyStart
+// off, fakeReturnDataStart, dst, fakeReturnDataEnd, size, :jumpback
+SWAP3
+// fakeReturnDataCopyStart=off+fakeReturnDataStart, dst, fakeReturnDataEnd, size, :jumpback
+ADD
+
+// Compute fakeReturnDataCopyEnd
+// fakeReturnDataCopyStart, fakeReturnDataCopyStart, dst, fakeReturnDataEnd, size, :jumpback
+DUP1
+// size, fakeReturnDataCopyStart, dst, fakeReturnDataEnd, fakeReturnDataCopyStart, :jumpback
+SWAP4
+// fakeReturnDataCopyEnd=fakeReturnDataCopyStart+size, dst, fakeReturnDataEnd, fakeReturnDataCopyStart, :jumpback
+ADD
+
+// Revert if fakeReturnDataCopyEnd > fakeReturnDataEnd
+// fakeReturnDataCopyEnd, fakeReturnDataCopyEnd, dst, fakeReturnDataEnd, fakeReturnDataCopyStart, :jumpback
+DUP1
+// fakeReturnDataEnd, fakeReturnDataCopyEnd, dst, fakeReturnDataCopyEnd, fakeReturnDataCopyStart, :jumpback
+SWAP3
+// fakeReturnDataCopyEnd, fakeReturnDataEnd, dst, fakeReturnDataCopyEnd, fakeReturnDataCopyStart, :jumpback
+SWAP1
+// fakeReturnDataCopyEnd > fakeReturnDataEnd, dst, fakeReturnDataCopyEnd, fakeReturnDataCopyStart, :jumpback
+GT
+// fakeReturnDataCopyEnd <= fakeReturnDataEnd, dst, fakeReturnDataCopyEnd, fakeReturnDataCopyStart, :jumpback
+ISZERO
+// :range-ok, fakeReturnDataCopyEnd <= fakeReturnDataEnd, dst, fakeReturnDataCopyEnd, fakeReturnDataCopyStart, :jumpback
+PUSH3 :range-ok
+// dst, fakeReturnDataCopyEnd, fakeReturnDataCopyStart, :jumpback
+JUMPI
+    // copy out of range
+    INVALID
+:range-ok
+// dst, fakeReturnDataCopyEnd, fakeReturnDataCopyStart, :jumpback
+JUMPDEST
+// fakeReturnDataCopyStart, fakeReturnDataCopyEnd, dst, :jumpback
+SWAP2
+
+:copy-loop
+JUMPDEST
+    // escape
+    // fakeReturnDataCopyEnd, fakeReturnDataCopyStart, fakeReturnDataCopyEnd, dst, :jumpback
+    DUP2
+    // fakeReturnDataCopyStart, fakeReturnDataCopyEnd, fakeReturnDataCopyStart, fakeReturnDataCopyEnd, dst, :jumpback
+    DUP2
+    // fakeReturnDataCopyStart < fakeReturnDataCopyEnd, fakeReturnDataCopyStart, fakeReturnDataCopyEnd, dst, :jumpback
+    LT
+    // fakeReturnDataCopyStart >= fakeReturnDataCopyEnd, fakeReturnDataCopyStart, fakeReturnDataCopyEnd, dst, :jumpback
+    ISZERO
+    // :copy-loop-out, fakeReturnDataCopyStart >= fakeReturnDataCopyEnd, fakeReturnDataCopyStart, fakeReturnDataCopyEnd, dst, :jumpback
+    PUSH3 :copy-loop-out
+    // fakeReturnDataCopyStart, fakeReturnDataCopyEnd, dst, :jumpback
+    JUMPI
+
+    // copy up to a word of data
+    // fakeReturnDataCopyStart, fakeReturnDataCopyStart, fakeReturnDataCopyEnd, dst, :jumpback
+    DUP1
+    // srcWord, fakeReturnDataCopyStart, fakeReturnDataCopyEnd, dst, :jumpback
+    MLOAD
+    // fakeReturnDataCopyStart, srcWord, fakeReturnDataCopyStart, fakeReturnDataCopyEnd, dst, :jumpback
+    DUP2
+    // fakeReturnDataCopyEnd, fakeReturnDataCopyStart, srcWord, fakeReturnDataCopyStart, fakeReturnDataCopyEnd, dst, :jumpback
+    DUP4
+    // remaining=fakeReturnDataCopyEnd-fakeReturnDataCopyStart, srcWord, fakeReturnDataCopyStart, fakeReturnDataCopyEnd, dst, :jumpback
+    SUB
+    // remaining, remaining, srcWord, fakeReturnDataCopyStart, fakeReturnDataCopyEnd, dst, :jumpback
+    DUP1
+    // 0x20, remaining, remaining, srcWord, fakeReturnDataCopyStart, fakeReturnDataCopyEnd, dst, :jumpback
+    PUSH1 0x20
+    // remaining, 0x20, remaining, srcWord, fakeReturnDataCopyStart, fakeReturnDataCopyEnd, dst, :jumpback
+    SWAP1
+    // remaining < 0x20, remaining, srcWord, fakeReturnDataCopyStart, fakeReturnDataCopyEnd, dst, :jumpback
+    LT
+    // remaining >= 0x20, remaining, srcWord, fakeReturnDataCopyStart, fakeReturnDataCopyEnd, dst, :jumpback
+    ISZERO
+    // :clipped, remaining >= 0x20, remaining, srcWord, fakeReturnDataCopyStart, fakeReturnDataCopyEnd, dst, :jumpback
+    PUSH3 :clipped
+    // remaining, srcWord, fakeReturnDataCopyStart, fakeReturnDataCopyEnd, dst, :jumpback
+    JUMPI
+        // not copying an entire word, combine the src word with the trailing bits at dst
+        // dst, remaining, srcWord, fakeReturnDataCopyStart, fakeReturnDataCopyEnd, dst, :jumpback
+        DUP5
+        // dstWord, remaining, srcWord, fakeReturnDataCopyStart, fakeReturnDataCopyEnd, dst, :jumpback
+        MLOAD
+        // remaining, dstWord, srcWord, fakeReturnDataCopyStart, fakeReturnDataCopyEnd, dst, :jumpback
+        SWAP1
+        // remaining, remaining, dstWord, srcWord, fakeReturnDataCopyStart, fakeReturnDataCopyEnd, dst, :jumpback
+        DUP1
+        // 8, remaining, remaining, dstWord, srcWord, fakeReturnDataCopyStart, fakeReturnDataCopyEnd, dst, :jumpback
+        PUSH1 8
+        // remainingBits=8*remaining, remaining, dstWord, srcWord, fakeReturnDataCopyStart, fakeReturnDataCopyEnd, dst, :jumpback
+        MUL
+        // -1, remainingBits, remaining, dstWord, srcWord, fakeReturnDataCopyStart, fakeReturnDataCopyEnd, dst, :jumpback
+        PUSH32 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
+        // remainingBits, -1, remaining, dstWord, srcWord, fakeReturnDataCopyStart, fakeReturnDataCopyEnd, dst, :jumpback
+        SWAP1
+        // dstMask, remaining, dstWord, srcWord, fakeReturnDataCopyStart, fakeReturnDataCopyEnd, dst, :jumpback
+        SHR
+        // dstMask, dstMask, remaining, dstWord, srcWord, fakeReturnDataCopyStart, fakeReturnDataCopyEnd, dst, :jumpback
+        DUP1
+        // srcMask=~dstMask, dstMask, remaining, dstWord, srcWord, fakeReturnDataCopyStart, fakeReturnDataCopyEnd, dst, :jumpback
+        NOT
+        // dstWord, dstMask, remaining, srcMask, srcWord, fakeReturnDataCopyStart, fakeReturnDataCopyEnd, dst, :jumpback
+        SWAP3
+        // v1=dstWord & dstMask, remaining, srcMask, srcWord, fakeReturnDataCopyStart, fakeReturnDataCopyEnd, dst, :jumpback
+        AND
+        // srcWord, remaining, srcMask, v1, fakeReturnDataCopyStart, fakeReturnDataCopyEnd, dst, :jumpback
+        SWAP3
+        // remaining, srcWord, srcMask, v1, fakeReturnDataCopyStart, fakeReturnDataCopyEnd, dst, :jumpback
+        SWAP1
+        // srcMask, srcWord, remaining, v1, fakeReturnDataCopyStart, fakeReturnDataCopyEnd, dst, :jumpback
+        SWAP2
+        // v2=srcMask & srcWord, remaining, v1, fakeReturnDataCopyStart, fakeReturnDataCopyEnd, dst, :jumpback
+        AND
+        // remaining, v2, v1, fakeReturnDataCopyStart, fakeReturnDataCopyEnd, dst, :jumpback
+        SWAP1
+        // v1, v2, remaining, fakeReturnDataCopyStart, fakeReturnDataCopyEnd, dst, :jumpback
+        SWAP2
+        // srcWord'=v1 | v2, remaining, fakeReturnDataCopyStart, fakeReturnDataCopyEnd, dst, :jumpback
+        OR
+        // remaining, srcWord', fakeReturnDataCopyStart, fakeReturnDataCopyEnd, dst, :jumpback
+        SWAP1
+    :clipped
+    // remaining, srcWord, fakeReturnDataCopyStart, fakeReturnDataCopyEnd, dst, :jumpback
+    JUMPDEST
+    // srcWord, fakeReturnDataCopyStart, fakeReturnDataCopyEnd, dst, :jumpback
+    POP
+    // dst, srcWord, fakeReturnDataCopyStart, fakeReturnDataCopyEnd, dst, :jumpback
+    DUP4
+    // fakeReturnDataCopyStart, fakeReturnDataCopyEnd, dst, :jumpback
+    MSTORE
+    
+    // Increment and re-loop
+    // 0x20, fakeReturnDataCopyStart, fakeReturnDataCopyEnd, dst, :jumpback
+    PUSH1 0x20
+    // 0x20, 0x20, fakeReturnDataCopyStart, fakeReturnDataCopyEnd, dst, :jumpback
+    DUP1
+    // dst, 0x20, fakeReturnDataCopyStart, fakeReturnDataCopyEnd, 0x20, :jumpback
+    SWAP4
+    // dst'+=0x20, fakeReturnDataCopyStart, fakeReturnDataCopyEnd, 0x20, :jumpback
+    ADD
+    // 0x20, fakeReturnDataCopyStart, fakeReturnDataCopyEnd, dst', :jumpback
+    SWAP3
+    // fakeReturnDataCopyStart'+=0x20, fakeReturnDataCopyEnd, dst', :jumpback
+    ADD
+    // :copy-loop, fakeReturnDataCopyStart'+=0x20, fakeReturnDataCopyEnd, dst', :jumpback
+    PUSH3 :copy-loop
+    // fakeReturnDataCopyStart', fakeReturnDataCopyEnd, dst', :jumpback
+    JUMP
+:copy-loop-out
+// fakeReturnDataCopyStart, fakeReturnDataCopyEnd, dst, :jumpback
+JUMPDEST
+// fakeReturnDataCopyEnd, dst, :jumpback
+POP
+// dst, :jumpback
+POP
+// :jumpback
+POP
+JUMP

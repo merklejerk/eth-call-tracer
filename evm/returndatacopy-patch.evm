@@ -1,0 +1,15 @@
+// dst, off, size
+// :jumpback, dst, off, size
+PUSH3 :jumpback
+// size, dst, off, :jumpback
+SWAP3
+// off, dst, size, :jumpback
+SWAP2
+// dst, off, size, :jumpback
+SWAP1
+// ::returndatacopy, dst, off, size, :jumpback
+PUSH3 ::returndatacopy
+// dst, off, size, :jumpback
+JUMP
+:jumpback
+JUMPDEST
