@@ -7,10 +7,10 @@ import {
     Instruction,
     linkCodes,
     OPCODES,
-    parseAsmFileAsync,
-    parseBytecode,
+    assembleFileAsync,
+    disassemble,
     serializeCode,
-} from "./evm-compiler";
+} from "./evm-assembler";
 import { createJumpRouterCode } from './jump-router';
 
 import HOOKS_ARTIFACT from '../out/Runner.sol/SpyHooks.json';
@@ -79,7 +79,7 @@ export async function patchBytecodeAsync(
         // Prepend a JUMPDEST for the preamble to jump to.
         { opcode: OPCODES.JUMPDEST, label: '::runtime' },
     ];
-    const ops = parseBytecode(bytecodeBuf);
+    const ops = disassemble(bytecodeBuf);
     for (const [i, op] of ops.entries()) {
         switch (op.opcode) {
             case OPCODES.PC:
@@ -207,7 +207,7 @@ export async function patchBytecodeAsync(
 
 async function parseAsmFragmentAsync(name: string, env: object): Promise<Instruction[]> {
     const file = path.resolve(__dirname, '..', '..', 'evm', `${name}.evm`);
-    return parseAsmFileAsync(file, env);
+    return assembleFileAsync(file, env);
 }
 
 function findSelector(artifact: any, name: string): string {

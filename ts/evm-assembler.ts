@@ -99,11 +99,11 @@ export interface Instruction {
     scopeId?: string;
 }
 
-export async function parseAsmFileAsync(file, env={}): Promise<Instruction[]> {
-    return parseAsm(await fs.readFile(file, { encoding: 'utf-8' }), env);
+export async function assembleFileAsync(file, env={}): Promise<Instruction[]> {
+    return assemble(await fs.readFile(file, { encoding: 'utf-8' }), env);
 }
 
-export function parseAsm(asm, env={}): Instruction[] {
+export function assemble(asm, env={}): Instruction[] {
     const instructions = [] as Instruction[];
     const scopeId = randomId();
     let nextLabel: string | null = null;
@@ -164,7 +164,7 @@ export function randomId(): string {
     return crypto.randomBytes(16).toString('hex');
 }
 
-export function parseBytecode(bytecode: number[] | Buffer): Instruction[] {
+export function disassemble(bytecode: number[] | Buffer): Instruction[] {
     const instructions = [] as Instruction[];
     let currentBlock = [];
     let currentScopeId = randomId();
@@ -214,7 +214,7 @@ export function parseBytecode(bytecode: number[] | Buffer): Instruction[] {
                     currentBlock.push(inst);
                 } else {
                     // No scope ID means we've hit the end of the code and are in
-                    // the data section. Stop decompiling.
+                    // the data section. Stop disassembling.
                     i = bytecode.length - 1;
                 }
                 break;

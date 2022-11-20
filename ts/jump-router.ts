@@ -1,5 +1,5 @@
 import { randomBytes } from "crypto";
-import { Instruction, OPCODES } from "./evm-compiler";
+import { Instruction, OPCODES } from "./evm-assembler";
 
 export function createJumpRouterCode(
     instructions: Instruction[],
