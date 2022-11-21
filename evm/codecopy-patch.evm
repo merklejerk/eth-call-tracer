@@ -1,4 +1,4 @@
-// TODO: this is wrong, doesn't pad with 0s
+// TODO: this is wrong, doesn't handle OOB
 // copyDst, codeOffset, size
 // codeOffset, copyDst, codeOffset, size
 DUP2

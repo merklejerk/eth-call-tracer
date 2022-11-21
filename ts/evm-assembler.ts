@@ -25,6 +25,8 @@ export const OPCODES = {
     DUP8: 0x87,
     CODESIZE: 0x38,
     EXTCODESIZE: 0x3B,
+    EXTCODECOPY: 0x3C,
+    EXTCODEHASH: 0x3F,
     CODECOPY: 0x39,
     STOP: 0x00,
     INVALID: 0xFE,

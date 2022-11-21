@@ -1,4 +1,5 @@
 import 'colors';
+import * as ethjs from 'ethereumjs-util';
 import dotenv from 'dotenv';
 import { env as ENV } from 'process';
 import process from 'process';
@@ -13,10 +14,11 @@ import RUNNER_ARTIFACT from '../out/Runner.sol/Runner.json';
 import ORIGIN_ARTIFACT from '../out/Runner.sol/Origin.json';
 import HOOKS_ARTIFACT from '../out/Runner.sol/SpyHooks.json';
 
-import { patchBytecodeAsync, PatchOptions } from './patch';
+import { patchBytecode, PatchOptions } from './patch';
 
 const NULL_ADDRESS = '0x0000000000000000000000000000000000000000';
 const NULL_BYTES = '0x';
+const EMPTY_HASH = ethjs.bufferToHex(ethjs.keccak256(Buffer.alloc(0)));
 const RUNNER_ADDRESS = '0x9000000000000000000000000000000000000001';
 const HOOKS_ADDRESS = '0x9000000000000000000000000000000000000002';
 
@@ -46,6 +48,18 @@ async function run(argv): Promise<void> {
     );
     const gasPrice = argv.gasPrice ? (BigInt(argv.gasPrice) * BigInt(1e9)).toString() : 0;
 
+    const accounts = await getTransactionAccounts(
+        eth,
+        {
+            from: argv.from,
+            to: argv.to,
+            value: argv.value,
+            gas: argv.gas,
+            gasPrice: gasPrice,
+            data: argv.data,
+            block: argv.block || undefined,
+        },
+    );
     const r = await runner.run(
         {
             txOrigin: argv.from,
@@ -62,22 +76,26 @@ async function run(argv): Promise<void> {
                 [argv.from]: { code: ORIGIN_ARTIFACT.deployedBytecode.object },
                 [runner.address]: { code: RUNNER_ARTIFACT.deployedBytecode.object },
                 [HOOKS_ADDRESS]: { code: HOOKS_ARTIFACT.deployedBytecode.object },
-                ...(await getPatchedContractOverridesAsync(
-                    eth,
-                    {
-                        from: argv.from,
-                        to: argv.to,
-                        value: argv.value,
-                        gas: argv.gas,
-                        gasPrice: gasPrice,
-                        data: argv.data,
-                        block: argv.block || undefined,
-                    },
+                ...getPatchedContractOverrides(
+                    accounts,
                     {
                         hooksAddress: HOOKS_ADDRESS,
                         origin: argv.from,
+                        originalStates: Object.assign(
+                            {
+                                [runner.address]: { code: NULL_BYTES, codeHash: EMPTY_HASH },
+                                [HOOKS_ADDRESS]: { code: NULL_BYTES, codeHash: EMPTY_HASH },
+                                [argv.from]: { code: NULL_BYTES, codeHash: EMPTY_HASH },
+                            },
+                            ...Object.keys(accounts).map(([a, c]) => ({
+                                [a]: {
+                                    code: c,
+                                    codeHash: ethjs.bufferToHex(ethjs.keccak256(c)),
+                                },
+                            })),
+                        ),
                     },
-                )),
+                ),
             },
         },
     );
@@ -94,11 +112,10 @@ interface TxParams {
     block?: number;
 }
 
-async function getPatchedContractOverridesAsync(
+async function getTransactionAccounts(
     eth: FlexEther,
     txParams: TxParams,
-    patchOpts: PatchOptions,
-): Promise<{ [address: string]: { code: string } }> {
+): Promise<{ [address: string]: string }> {
     let addresses = Object.keys(Object.assign(
         { [txParams.to]: true },
         ...(await getAccessListAsync(eth, txParams))
@@ -109,24 +126,25 @@ async function getPatchedContractOverridesAsync(
         ...(await Promise.all(addresses.map(a => eth.getCode(a))))
             .map((b, i) => ({ [addresses[i]]: b })),
     );
-    bytecodes = Object.assign(
+    return Object.assign(
         {},
         ...Object
             .entries(bytecodes)
             .filter(([a, b]) => b !== '0x')
             .map(([a, b]) => ({ [a]: b })),
     );
-    addresses = Object.keys(bytecodes);
-    const r = Object.assign(
+}
+
+function getPatchedContractOverrides(
+    accounts: { [address: string]: string },
+    patchOpts: PatchOptions,
+): { [address: string]: { code: string } } {
+    return Object.assign(
         {},
-        ...(await Promise.all(
-            Object
-            .values(bytecodes)
-            .map(bytecode => patchBytecodeAsync(bytecode, patchOpts)),
-        )).map((b, i) => ({ [addresses[i]]: { code: b } })),
+        ...Object.entries(accounts).map(
+            ([a, c]) => ({ [a]: { code: patchBytecode(c, patchOpts) } }),
+        ),
     );
-    // console.log(r[txParams.to].code);
-    return r;
 }
 
 async function getAccessListAsync(eth: FlexEther, txParams: TxParams)

@@ -1,5 +1,6 @@
 import * as ethjs from 'ethereumjs-util';
 import path from 'path';
+import fs from 'fs';
 import {
     commitCode,
     dupeCode,
@@ -7,17 +8,19 @@ import {
     Instruction,
     linkCodes,
     OPCODES,
-    assembleFileAsync,
     disassemble,
     serializeCode,
+    assemble,
 } from "./evm-assembler";
 import { createJumpRouterCode } from './jump-router';
 
 import HOOKS_ARTIFACT from '../out/Runner.sol/SpyHooks.json';
+import { createExtCodeCopyRouter, createExtCodeHashRouter, createExtCodeSizeRouter } from './ext-router';
 
 export interface PatchOptions {
     hooksAddress: string;
     origin: string;
+    originalStates: { [addr: string]: { code: string, codeHash: string } };
 }
 
 const SCRATCH_MEM_LOC = 0x8000;
@@ -35,6 +38,9 @@ enum PatchFragments {
     CallCodePatch = 'callcode-patch',
     ReturnDataCopyPatch = 'returndatacopy-patch',
     ReturnDataSizePatch = 'returndatasize-patch',
+    ExtCodeSizePatch = 'extcodesize-patch',
+    ExtCodeCopyPatch = 'extcodecopy-patch',
+    ExtCodeHashPatch = 'extcodehash-patch',
 }
 enum LibFragments {
     CheckedDegateCall = 'checked-delegatecall',
@@ -52,11 +58,12 @@ const ALL_FRAGMENT_NAMES = [
 const HANDLE_SPY_SSTORE_SELECTOR = findSelector(HOOKS_ARTIFACT, 'handleSpySstore');
 const HANDLE_SPY_LOG_SELECTOR = findSelector(HOOKS_ARTIFACT, 'handleSpyLog');
 const HANDLE_SPY_CALL_SELECTOR = findSelector(HOOKS_ARTIFACT, 'handleSpyCall');
+const RAW_FRAGMENTS = Object.assign(
+    {},
+    ...ALL_FRAGMENT_NAMES.map(n => ({ [n]: loadAsmFragment(n) })),
+);
 
-export async function patchBytecodeAsync(
-    bytecode: string,
-    opts: PatchOptions,
-): Promise<string> {
+export function patchBytecode(bytecode: string, opts: PatchOptions): string {
     if (bytecode === '0x') {
         return bytecode;
     }
@@ -70,9 +77,11 @@ export async function patchBytecodeAsync(
         'PREAMBLE_SIZE': 5,
         'HOOK_CALL_FAILED_ERROR': stringToBytes32('hook call failed'),
     };
-    const fragments = Object.assign({},
-        ...(await Promise.all(ALL_FRAGMENT_NAMES.map(f => parseAsmFragmentAsync(f, env))))
-            .map((code, i ) => ({ [ALL_FRAGMENT_NAMES[i]]: code })),
+    const fragments = Object.assign(
+        {},
+        ...Object.entries(RAW_FRAGMENTS).map(
+            ([n, asm]) => ({ [n]: assemble(asm, env) }),
+        ),
     ) as { [k in AllFragments]: Instruction[] };
     const bytecodeBuf = ethjs.toBuffer(bytecode);
     const runtimeCode: Instruction[] = [
@@ -101,6 +110,18 @@ export async function patchBytecodeAsync(
             case OPCODES.CODECOPY:
                 // Replace with codecopy patch
                 runtimeCode.push(...dupeCode(fragments[PatchFragments.CodeCopyPatch]));
+                break;
+            case OPCODES.EXTCODECOPY:
+                // Replace with extcodecopy patch
+                runtimeCode.push(...dupeCode(fragments[PatchFragments.ExtCodeCopyPatch]));
+                break;
+            case OPCODES.EXTCODESIZE:
+                // Replace with extcodesize patch
+                runtimeCode.push(...dupeCode(fragments[PatchFragments.ExtCodeSizePatch]));
+                break;
+            case OPCODES.EXTCODEHASH:
+                // Replace with extcodehash patch
+                runtimeCode.push(...dupeCode(fragments[PatchFragments.ExtCodeHashPatch]));
                 break;
             case OPCODES.ORIGIN:
                 // PUSH20 fake origin.
@@ -158,8 +179,34 @@ export async function patchBytecodeAsync(
                 runtimeCode.push(op);
         }
     }
-    // Create the jump router.
-    const jumpRouterCode = createJumpRouterCode(runtimeCode);
+    // Create the router codes.
+    const routers = [
+        createJumpRouterCode(runtimeCode),
+        createExtCodeCopyRouter(Object.assign(
+            {},
+            ...Object.entries(opts.originalStates).map(
+                ([a, s]) => ({
+                    [a]: s.code.length === 0
+                    // Supposed to be no code. Use a large offset to make it copy 0s.
+                    ? 16e6
+                    // Otherwise we patched it so skip the preamble.
+                    : env.PREAMBLE_SIZE,
+                }),
+            ),
+        )),
+        createExtCodeSizeRouter(Object.assign(
+            {},
+            ...Object.entries(opts.originalStates).map(
+                ([a, s]) => ({ [a]: s.code.length }),
+            ),
+        )),
+        createExtCodeHashRouter(Object.assign(
+            {},
+            ...Object.entries(opts.originalStates).map(
+                ([a, s]) => ({ [a]: s.codeHash }),
+            ),
+        )),
+    ];
 
     // Decide where everything will live.
     let bufOffset = 0;
@@ -177,14 +224,16 @@ export async function patchBytecodeAsync(
     for (const name of LIB_FRAGMENT_NAMES) {
         bufOffset += commitCode(fragments[name], bufOffset);
     }
-    // Commit the jump router.   
-    bufOffset += commitCode(jumpRouterCode, bufOffset);
+    // Commit the routers.   
+    for (const router of routers) {
+        bufOffset += commitCode(router, bufOffset);
+    }
 
     // Link everything.
     linkCodes(
         fragments[PatchFragments.Preamble],
         runtimeCode,
-        jumpRouterCode,
+        ...routers,
         ...LIB_FRAGMENT_NAMES.map(n => fragments[n]),
     );
 
@@ -200,14 +249,16 @@ export async function patchBytecodeAsync(
     for (const name of LIB_FRAGMENT_NAMES) {
         serializeCode(outBuf, fragments[name]);
     }
-    // Write the jump router.
-    serializeCode(outBuf, jumpRouterCode);
+    // Write the routers.
+    for (const router of routers) {
+        serializeCode(outBuf, router);
+    }
     return ethjs.bufferToHex(outBuf);
 }
 
-async function parseAsmFragmentAsync(name: string, env: object): Promise<Instruction[]> {
+function loadAsmFragment(name: string): string {
     const file = path.resolve(__dirname, '..', '..', 'evm', `${name}.evm`);
-    return assembleFileAsync(file, env);
+    return fs.readFileSync(file, { encoding: 'utf-8' });
 }
 
 function findSelector(artifact: any, name: string): string {
