@@ -21,6 +21,7 @@ export interface PatchOptions {
     hooksAddress: string;
     origin: string;
     originalStates: { [addr: string]: { code: string, codeHash: string } };
+    logsOnly?: boolean;
 }
 
 const SCRATCH_MEM_LOC = 0x8000;
@@ -133,34 +134,6 @@ export function patchBytecode(bytecode: string, opts: PatchOptions): string {
                     { ...op, label: `::__jump__${op.originalOffset}__` },
                 );
                 break;
-            case OPCODES.RETURNDATASIZE:
-                // Replace with returndatasize patch.
-                runtimeCode.push(...dupeCode(fragments[PatchFragments.ReturnDataSizePatch]));
-                break;
-            case OPCODES.RETURNDATACOPY:
-                // Replace with returndatasize patch.
-                runtimeCode.push(...dupeCode(fragments[PatchFragments.ReturnDataCopyPatch]));
-                break;
-            case OPCODES.STATICCALL:
-                // Replace with staticcall patch
-                runtimeCode.push(...dupeCode(fragments[PatchFragments.StaticcallPatch]));
-                break;
-            case OPCODES.CALL:
-                // Replace with call patch
-                runtimeCode.push(...dupeCode(fragments[PatchFragments.CallPatch]));
-                break;
-            case OPCODES.DELEGATECALL:
-                // Replace with delegatecall patch
-                runtimeCode.push(...dupeCode(fragments[PatchFragments.DelegateCallPatch]));
-                break;
-            case OPCODES.CALLCODE:
-                // Replace with callcode patch
-                runtimeCode.push(...dupeCode(fragments[PatchFragments.CallCodePatch]));
-                break;
-            case OPCODES.SSTORE:
-                // Replace with sstore patch.
-                runtimeCode.push(...dupeCode(fragments[PatchFragments.SStorePatch]));
-                break;
             case OPCODES.LOG0:
             case OPCODES.LOG1:
             case OPCODES.LOG2:
@@ -175,8 +148,45 @@ export function patchBytecode(bytecode: string, opts: PatchOptions): string {
                 runtimeCode.push(...dupeCode(fragments[PatchFragments.LogPatch]));
                 break;
             default:
-                // Copy unmolested.
-                runtimeCode.push(op);
+                if (!opts.logsOnly) {
+                    switch (op.opcode) {
+                        case OPCODES.RETURNDATASIZE:
+                            // Replace with returndatasize patch.
+                            runtimeCode.push(...dupeCode(fragments[PatchFragments.ReturnDataSizePatch]));
+                            break;
+                        case OPCODES.RETURNDATACOPY:
+                            // Replace with returndatasize patch.
+                            runtimeCode.push(...dupeCode(fragments[PatchFragments.ReturnDataCopyPatch]));
+                            break;
+                        case OPCODES.STATICCALL:
+                            // Replace with staticcall patch
+                            runtimeCode.push(...dupeCode(fragments[PatchFragments.StaticcallPatch]));
+                            break;
+                        case OPCODES.CALL:
+                            // Replace with call patch
+                            runtimeCode.push(...dupeCode(fragments[PatchFragments.CallPatch]));
+                            break;
+                        case OPCODES.DELEGATECALL:
+                            // Replace with delegatecall patch
+                            runtimeCode.push(...dupeCode(fragments[PatchFragments.DelegateCallPatch]));
+                            break;
+                        case OPCODES.CALLCODE:
+                            // Replace with callcode patch
+                            runtimeCode.push(...dupeCode(fragments[PatchFragments.CallCodePatch]));
+                            break;
+                        case OPCODES.SSTORE:
+                            // Replace with sstore patch.
+                            runtimeCode.push(...dupeCode(fragments[PatchFragments.SStorePatch]));
+                            break;
+                        default:
+                            // Copy unmolested.
+                            runtimeCode.push(op);
+                    }
+                } else {
+                    // Copy unmolested.
+                    runtimeCode.push(op);
+                }
+                
         }
     }
     // Create the router codes.

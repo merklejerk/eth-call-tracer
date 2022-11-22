@@ -242,11 +242,17 @@ SWAP3
 SWAP1
 // retOffset, retSize, :jumpback, success
 SWAP2
-// 0x00, retOffset, retSize, :jumpback, success
+// strict=false, retOffset, retSize, :jumpback, success
 PUSH1 0x00
-// retOffset, 0x00, retSize, :jumpback, success
+// retSize, retOffset, strict, :jumpback, success
+SWAP2
+// copyStart=0x00, retSize, retOffset, strict, :jumpback, success
+PUSH1 0x00
+// retSize, copyStart, retOffset, strict, :jumpback, success
 SWAP1
-// ::returndatacopy, retOffset, 0x00, retSize, :jumpback, success
+// retOffset, copyStart, retSize, strict, :jumpback, success
+SWAP2
+// ::returndatacopy, retOffset, copyStart, retSize, strict, :jumpback, success
 PUSH3 ::returndatacopy
-// retOffset, 0x00, retSize, :jumpback, success
+// retOffset, copyStart, retSize, strict, :jumpback, success
 JUMP

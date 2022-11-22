@@ -70,6 +70,7 @@ contract Spy {
     Spy_CREATE[] internal spy_creates;
     Spy_CREATE2[] internal spy_create2s;
 
+    receive() external payable {}
 
     function onSpyCall(Spy_CALL memory spied) external virtual {
         spy_calls.push(spied);
@@ -89,7 +90,7 @@ contract Spy {
 }
 
 contract SpyHooks {
-    Spy constant SPY = Spy(0x9000000000000000000000000000000000000001);
+    Spy constant SPY = Spy(payable(0x9000000000000000000000000000000000000001));
 
     uint256 constant CALL_GAS_OVERHEAD = 0; // TODO
     function handleSpyCall(
@@ -104,20 +105,20 @@ contract SpyHooks {
             switch callType
             case 0 { // CallType.Call
                 gasUsed := gas()
-                success := call(gas_, to, value, add(data, 0x20), mload(data), 0, 0)
+                success := call(gas(), to, value, add(data, 0x20), mload(data), 0, 0)
             }
             case 1 { // CallType.Static
                 gasUsed := gas()
                 // Must use call or else nested hooked calls will fail.
-                success := call(gas_, to, value, add(data, 0x20), mload(data), 0, 0)
+                success := call(gas(), to, value, add(data, 0x20), mload(data), 0, 0)
             }
             case 2 { // CallType.Delegate
                 gasUsed := gas()
-                success := delegatecall(gas_, to, add(data, 0x20), mload(data), 0, 0)
+                success := delegatecall(gas(), to, add(data, 0x20), mload(data), 0, 0)
             }
             default { // case CallType.Code (3)
                 gasUsed := gas()
-                success := callcode(gas_, to, value, add(data, 0x20), mload(data), 0, 0)
+                success := callcode(gas(), to, value, add(data, 0x20), mload(data), 0, 0)
             }
             gasUsed := sub(sub(gasUsed, gas()), CALL_GAS_OVERHEAD)
             resultData := mload(0x40)

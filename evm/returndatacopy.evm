@@ -1,65 +1,79 @@
-// dst, off, size, :jumpback
+// dst, off, size, strict, :jumpback
 ::returndatacopy
 JUMPDEST
 
 // Read the fake return data length.
-// fakeReturnData, dst, off, size, :jumpback
+// fakeReturnData, dst, off, size, strict, :jumpback
 PUSH2 $FAKE_RETURNDATA_MEM_LOC
-// fakeReturnData, fakeReturnData, dst, off, size, :jumpback
+// fakeReturnData, fakeReturnData, dst, off, size, strict, :jumpback
 DUP1
-// fakeReturnDataLength, fakeReturnData, dst, off, size, :jumpback
+// fakeReturnDataLength, fakeReturnData, dst, off, size, strict, :jumpback
 MLOAD // first word is length
 
 // Compute fakeReturnDataStart and fakeReturnDataEnd
-// fakeReturnData, fakeReturnDataLength, dst, off, size, :jumpback
+// fakeReturnData, fakeReturnDataLength, dst, off, size, strict, :jumpback
 SWAP1
-// 0x20, fakeReturnData, fakeReturnDataLength, dst, off, size, :jumpback
+// 0x20, fakeReturnData, fakeReturnDataLength, dst, off, size, strict, :jumpback
 PUSH1 0x20
-// fakeReturnDataStart=fakeReturnData+0x20, fakeReturnDataLength, dst, off, size, :jumpback
+// fakeReturnDataStart=fakeReturnData+0x20, fakeReturnDataLength, dst, off, size, strict, :jumpback
 ADD
-// fakeReturnDataStart, fakeReturnDataStart, fakeReturnDataLength, dst, off, size, :jumpback
+// fakeReturnDataStart, fakeReturnDataStart, fakeReturnDataLength, dst, off, size, strict, :jumpback
 DUP1
-// fakeReturnDataLength, fakeReturnDataStart, fakeReturnDataStart, dst, off, size, :jumpback
+// fakeReturnDataLength, fakeReturnDataStart, fakeReturnDataStart, dst, off, size, strict, :jumpback
 SWAP2
-// fakeReturnDataEnd=fakeReturnDataStart+fakeReturnDataLength, fakeReturnDataStart, dst, off, size, :jumpback
+// fakeReturnDataEnd=fakeReturnDataStart+fakeReturnDataLength, fakeReturnDataStart, dst, off, size, strict, :jumpback
 ADD
 
 // Compute fakeReturnDataCopyStart
-// off, fakeReturnDataStart, dst, fakeReturnDataEnd, size, :jumpback
+// off, fakeReturnDataStart, dst, fakeReturnDataEnd, size, strict, :jumpback
 SWAP3
-// fakeReturnDataCopyStart=off+fakeReturnDataStart, dst, fakeReturnDataEnd, size, :jumpback
+// fakeReturnDataCopyStart=off+fakeReturnDataStart, dst, fakeReturnDataEnd, size, strict, :jumpback
 ADD
 
 // Compute fakeReturnDataCopyEnd
-// fakeReturnDataCopyStart, fakeReturnDataCopyStart, dst, fakeReturnDataEnd, size, :jumpback
+// fakeReturnDataCopyStart, fakeReturnDataCopyStart, dst, fakeReturnDataEnd, size, strict, :jumpback
 DUP1
-// size, fakeReturnDataCopyStart, dst, fakeReturnDataEnd, fakeReturnDataCopyStart, :jumpback
+// size, fakeReturnDataCopyStart, dst, fakeReturnDataEnd, fakeReturnDataCopyStart, strict, :jumpback
 SWAP4
-// fakeReturnDataCopyEnd=fakeReturnDataCopyStart+size, dst, fakeReturnDataEnd, fakeReturnDataCopyStart, :jumpback
+// fakeReturnDataCopyEnd=fakeReturnDataCopyStart+size, dst, fakeReturnDataEnd, fakeReturnDataCopyStart, strict, :jumpback
 ADD
 
 // Revert if fakeReturnDataCopyEnd > fakeReturnDataEnd
-// fakeReturnDataCopyEnd, fakeReturnDataCopyEnd, dst, fakeReturnDataEnd, fakeReturnDataCopyStart, :jumpback
+// fakeReturnDataCopyEnd, fakeReturnDataCopyEnd, dst, fakeReturnDataEnd, fakeReturnDataCopyStart, strict, :jumpback
 DUP1
-// fakeReturnDataEnd, fakeReturnDataCopyEnd, dst, fakeReturnDataCopyEnd, fakeReturnDataCopyStart, :jumpback
+// fakeReturnDataEnd, fakeReturnDataCopyEnd, dst, fakeReturnDataCopyEnd, fakeReturnDataCopyStart, strict, :jumpback
 SWAP3
-// fakeReturnDataCopyEnd, fakeReturnDataEnd, dst, fakeReturnDataCopyEnd, fakeReturnDataCopyStart, :jumpback
+// fakeReturnDataCopyEnd, fakeReturnDataEnd, dst, fakeReturnDataCopyEnd, fakeReturnDataCopyStart, strict, :jumpback
 SWAP1
-// fakeReturnDataCopyEnd > fakeReturnDataEnd, dst, fakeReturnDataCopyEnd, fakeReturnDataCopyStart, :jumpback
+// fakeReturnDataCopyEnd > fakeReturnDataEnd, dst, fakeReturnDataCopyEnd, fakeReturnDataCopyStart, strict, :jumpback
 GT
-// fakeReturnDataCopyEnd <= fakeReturnDataEnd, dst, fakeReturnDataCopyEnd, fakeReturnDataCopyStart, :jumpback
+// fakeReturnDataCopyEnd <= fakeReturnDataEnd, dst, fakeReturnDataCopyEnd, fakeReturnDataCopyStart, strict, :jumpback
 ISZERO
-// :range-ok, fakeReturnDataCopyEnd <= fakeReturnDataEnd, dst, fakeReturnDataCopyEnd, fakeReturnDataCopyStart, :jumpback
+// :range-ok, fakeReturnDataCopyEnd <= fakeReturnDataEnd, dst, fakeReturnDataCopyEnd, fakeReturnDataCopyStart, strict, :jumpback
 PUSH3 :range-ok
-// dst, fakeReturnDataCopyEnd, fakeReturnDataCopyStart, :jumpback
+// dst, fakeReturnDataCopyEnd, fakeReturnDataCopyStart, strict, :jumpback
 JUMPI
-    // copy out of range
-    INVALID
+    // fakeReturnDataCopyEnd, fakeReturnDataCopyStart, strict, :jumpback
+    POP
+    // fakeReturnDataCopyStart, strict, :jumpback
+    POP
+    // strict, :jumpback
+    POP
+    // !strict, :jumpback
+    ISZERO
+    // :jumpback, !strict
+    SWAP1
+    JUMPI
+        INVALID
 :range-ok
-// dst, fakeReturnDataCopyEnd, fakeReturnDataCopyStart, :jumpback
+// dst, fakeReturnDataCopyEnd, fakeReturnDataCopyStart, strict, :jumpback
 JUMPDEST
+// strict, fakeReturnDataCopyEnd, fakeReturnDataCopyStart, dst, :jumpback
+SWAP3
+// fakeReturnDataCopyEnd, fakeReturnDataCopyStart, dst, :jumpback
+POP
 // fakeReturnDataCopyStart, fakeReturnDataCopyEnd, dst, :jumpback
-SWAP2
+SWAP1
 
 :copy-loop
 JUMPDEST

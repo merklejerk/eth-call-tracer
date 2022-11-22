@@ -3,13 +3,17 @@
 PUSH3 :jumpback
 // size, dst, off, :jumpback
 SWAP3
-// off, dst, size, :jumpback
-SWAP2
-// dst, off, size, :jumpback
+// strict=true, size, dst, off, :jumpback
+PUSH1 0x01
+// off, size, dst, strict, :jumpback
+SWAP3
+// size, off, dst, strict, :jumpback
 SWAP1
-// ::returndatacopy, dst, off, size, :jumpback
+// dst, off, size, strict, :jumpback
+SWAP2
+// ::returndatacopy, dst, off, size, strict, :jumpback
 PUSH3 ::returndatacopy
-// dst, off, size, :jumpback
+// dst, off, size, strict, :jumpback
 JUMP
 :jumpback
 JUMPDEST

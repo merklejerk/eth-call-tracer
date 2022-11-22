@@ -1,7 +1,7 @@
 import 'colors';
 import * as ethjs from 'ethereumjs-util';
 import dotenv from 'dotenv';
-import { env as ENV } from 'process';
+import { env as ENV, openStdin } from 'process';
 import process from 'process';
 import FlexContract from 'flex-contract';
 import FlexEther from 'flex-ether';
@@ -15,6 +15,7 @@ import ORIGIN_ARTIFACT from '../out/Runner.sol/Origin.json';
 import HOOKS_ARTIFACT from '../out/Runner.sol/SpyHooks.json';
 
 import { patchBytecode, PatchOptions } from './patch';
+import { timeItAsync } from './util';
 
 const NULL_ADDRESS = '0x0000000000000000000000000000000000000000';
 const NULL_BYTES = '0x';
@@ -27,11 +28,14 @@ yargs(process.argv.slice(2)).command('$0', 'run', yargs =>
         .option('rpc-url', { type: 'string', desc: 'node RPC url' })
         .option('from', { type: 'string', desc: 'TX caller', default: NULL_ADDRESS })
         .option('to', { type: 'string', desc: 'TX target', default: NULL_ADDRESS })
-        .option('value', { type: 'string', desc: 'TX value', default: '0' })
-        .option('block', { type: 'number', desc: 'block number', default: 0 })
-        .option('gas-price', { type: 'number', desc: 'gas price (gwei)', default: 0 })
-        .option('gas', { type: 'number', desc: 'gas', default: 0 })
-        .option('data', { type: 'string', desc: 'TX data', default: NULL_BYTES }),
+        .option('value', { type: 'string', desc: 'TX value' })
+        .option('block', { type: ['number', 'string'], desc: 'block number' })
+        .option('gas-price', { type: 'number', desc: 'gas price (gwei)' })
+        .option('gas', { type: 'number', desc: 'gas' })
+        .option('data', { type: 'string', desc: 'TX data', default: NULL_BYTES })
+        .option('tx', { type: 'string', desc: 'historic TX hash' })
+        .option('quiet', { type: 'boolean', alias: 'q' })
+        .option('logs-only', { type: 'boolean', alias: 'L' }),
     argv => run(argv),
 ).argv;
 
@@ -46,59 +50,79 @@ async function run(argv): Promise<void> {
         RUNNER_ADDRESS,
         { eth },
     );
-    const gasPrice = argv.gasPrice ? (BigInt(argv.gasPrice) * BigInt(1e9)).toString() : 0;
-
-    const accounts = await getTransactionAccounts(
-        eth,
-        {
+    let tx: TxParams;
+    if (argv.tx) {
+        const tx_ = await eth.getTransaction(argv.tx);
+        const receipt = await eth.getTransactionReceipt(argv.tx);
+        tx = {
+            from: tx_.from,
+            to: tx_.to,
+            data: tx_.input,
+            value: argv.value !== undefined ? argv.value : tx_.value,
+            gas: argv.gas !== undefined ? argv.gas : tx_.gas,
+            gasPrice: argv.gasPrice !== undefined
+                ? (BigInt(argv.gasPrice) * BigInt(1e9)).toString()
+                : tx_.gasPrice,
+            block: argv.block !== undefined
+                ? (typeof(argv.block) === 'string' ? undefined : argv.block)
+                : receipt.blockNumber - 1,
+        };
+    } else {
+        tx = {
             from: argv.from,
             to: argv.to,
-            value: argv.value,
-            gas: argv.gas,
-            gasPrice: gasPrice,
             data: argv.data,
-            block: argv.block || undefined,
-        },
-    );
-    const r = await runner.run(
+            value: argv.value || 0,
+            gas: argv.gas || 1e6,
+            gasPrice: argv.gasPrice || 0,
+            block: typeof(argv.block) === 'string' ? undefined : argv.block,
+        };
+    }
+    if (!argv.quiet) {
+        console.debug(tx);
+    }
+    const accounts = await getTransactionAccounts(eth, tx);
+    const r = await timeItAsync(runner.run(
         {
-            txOrigin: argv.from,
-            txTo: argv.to,
-            txValue: argv.value,
-            txData: argv.data,
+            txOrigin: tx.from,
+            txTo: tx.to,
+            txValue: tx.value,
+            txData: tx.data,
             txGas: 100e6,
-            txGasPrice: gasPrice
+            txGasPrice: tx.gasPrice,
         },
     ).call(
         {
-            block: argv.block || undefined,
+            block: tx.block,
             overrides: {
-                [argv.from]: { code: ORIGIN_ARTIFACT.deployedBytecode.object },
+                [tx.from]: { code: ORIGIN_ARTIFACT.deployedBytecode.object },
                 [runner.address]: { code: RUNNER_ARTIFACT.deployedBytecode.object },
                 [HOOKS_ADDRESS]: { code: HOOKS_ARTIFACT.deployedBytecode.object },
                 ...getPatchedContractOverrides(
                     accounts,
                     {
                         hooksAddress: HOOKS_ADDRESS,
-                        origin: argv.from,
+                        origin: tx.from,
+                        logsOnly: argv.logsOnly,
                         originalStates: Object.assign(
-                            {
-                                [runner.address]: { code: NULL_BYTES, codeHash: EMPTY_HASH },
-                                [HOOKS_ADDRESS]: { code: NULL_BYTES, codeHash: EMPTY_HASH },
-                                [argv.from]: { code: NULL_BYTES, codeHash: EMPTY_HASH },
-                            },
+                            {},
                             ...Object.keys(accounts).map(([a, c]) => ({
                                 [a]: {
                                     code: c,
                                     codeHash: ethjs.bufferToHex(ethjs.keccak256(c)),
                                 },
                             })),
+                            {
+                                [tx.from.toLowerCase()]: { code: NULL_BYTES, codeHash: EMPTY_HASH },
+                                [runner.address.toLowerCase()]: { code: NULL_BYTES, codeHash: EMPTY_HASH },
+                                [HOOKS_ADDRESS.toLowerCase()]: { code: NULL_BYTES, codeHash: EMPTY_HASH },
+                            },
                         ),
                     },
                 ),
             },
         },
-    );
+    ), 'eth_call');
     console.log(JSON.stringify(cleanResultObject(r), null, '\t'));
 }
 
@@ -117,9 +141,9 @@ async function getTransactionAccounts(
     txParams: TxParams,
 ): Promise<{ [address: string]: string }> {
     let addresses = Object.keys(Object.assign(
-        { [txParams.to]: true },
+        { [txParams.to.toLowerCase()]: true },
         ...(await getAccessListAsync(eth, txParams))
-            .map(e => ({[e.address]: true })),
+            .map(e => ({[e.address.toLowerCase()]: true })),
     ));
     let bytecodes: { [addr: string]: string } = Object.assign(
         {},
@@ -131,6 +155,7 @@ async function getTransactionAccounts(
         ...Object
             .entries(bytecodes)
             .filter(([a, b]) => b !== '0x')
+            // .filter(([a]) => a == '0x1522900b6dafac587d499a862861c0869be6e428')
             .map(([a, b]) => ({ [a]: b })),
     );
 }
