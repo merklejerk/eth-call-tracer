@@ -25,7 +25,6 @@ export interface PatchOptions {
 }
 
 const SCRATCH_MEM_LOC = 0x8000;
-const FAKE_RETURNDATA_MEM_LOC = 0xA000;
 enum PatchFragments {
     Preamble = 'preamble',
     JumpPatch = 'jump-patch',
@@ -37,8 +36,6 @@ enum PatchFragments {
     CallPatch = 'call-patch',
     DelegateCallPatch = 'delegatecall-patch',
     CallCodePatch = 'callcode-patch',
-    ReturnDataCopyPatch = 'returndatacopy-patch',
-    ReturnDataSizePatch = 'returndatasize-patch',
     ExtCodeSizePatch = 'extcodesize-patch',
     ExtCodeCopyPatch = 'extcodecopy-patch',
     ExtCodeHashPatch = 'extcodehash-patch',
@@ -48,7 +45,6 @@ enum LibFragments {
     LogHook = 'log-hook',
     SstoreHook = 'sstore-hook',
     CallHook = 'call-hook',
-    ReturnDataCopy = 'returndatacopy',
 }
 type AllFragments = PatchFragments | LibFragments;
 const LIB_FRAGMENT_NAMES = Object.values(LibFragments);
@@ -71,7 +67,6 @@ export function patchBytecode(bytecode: string, opts: PatchOptions): string {
     const env = {
         'HOOKS_CONTRACT_ADDRESS': opts.hooksAddress,
         'SCRATCH_MEM_LOC': SCRATCH_MEM_LOC,
-        'FAKE_RETURNDATA_MEM_LOC': FAKE_RETURNDATA_MEM_LOC,
         'HANDLE_SPY_SSTORE_SELECTOR': HANDLE_SPY_SSTORE_SELECTOR,
         'HANDLE_SPY_LOG_SELECTOR': HANDLE_SPY_LOG_SELECTOR,
         'HANDLE_SPY_CALL_SELECTOR': HANDLE_SPY_CALL_SELECTOR,
@@ -150,14 +145,6 @@ export function patchBytecode(bytecode: string, opts: PatchOptions): string {
             default:
                 if (!opts.logsOnly) {
                     switch (op.opcode) {
-                        case OPCODES.RETURNDATASIZE:
-                            // Replace with returndatasize patch.
-                            runtimeCode.push(...dupeCode(fragments[PatchFragments.ReturnDataSizePatch]));
-                            break;
-                        case OPCODES.RETURNDATACOPY:
-                            // Replace with returndatasize patch.
-                            runtimeCode.push(...dupeCode(fragments[PatchFragments.ReturnDataCopyPatch]));
-                            break;
                         case OPCODES.STATICCALL:
                             // Replace with staticcall patch
                             runtimeCode.push(...dupeCode(fragments[PatchFragments.StaticcallPatch]));
