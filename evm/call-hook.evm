@@ -177,50 +177,6 @@ JUMPDEST
 // | offset - offset+0x20 | `resultData` length         |
 // | offset+0x20 - offset+0x20+resultData.length | `resultData` data |
 
-// decode call result offset
-// 0x20, :jumpback, retOffset, retSize
-PUSH1 0x20
-// 0x20, 0x20, :jumpback, retOffset, retSize
-DUP1
-// scratch, 0x20, 0x20, :jumpback, retOffset, retSize
-PUSH2 $SCRATCH_MEM_LOC
-// :jumpback, retOffset, retSize
-RETURNDATACOPY
-// scratch, :jumpback, retOffset, retSize
-PUSH2 $SCRATCH_MEM_LOC
-// resultDataOffset, :jumpback, retOffset, retSize
-MLOAD
-
-// decode call result length and copy to fake return data location
-// 0x20, resultDataOffset, :jumpback, retOffset, retSize
-PUSH1 0x20
-// resultDataOffset, 0x20, resultDataOffset, :jumpback, retOffset, retSize
-DUP2
-// scratch, resultDataOffset, 0x20, resultDataOffset, :jumpback, retOffset, retSize
-PUSH2 $FAKE_RETURNDATA_MEM_LOC
-// resultDataOffset, :jumpback, retOffset, retSize
-RETURNDATACOPY
-// scratch, resultDataOffset, :jumpback, retOffset, retSize
-PUSH2 $FAKE_RETURNDATA_MEM_LOC
-// resultDataLength, resultDataOffset, :jumpback, retOffset, retSize
-MLOAD
-
-// copy call result length and data to fake returndatasize buf
-// resultDataOffset, resultDataLength, :jumpback, retOffset, retSize
-SWAP1
-// 0x20, resultDataOffset, resultDataLength, :jumpback, retOffset, retSize
-PUSH1 0x20
-// resultDataOffset+0x20, resultDataLength, :jumpback, retOffset, retSize
-ADD
-// fakeReturnData, resultDataOffset+0x20, resultDataLength, :jumpback, retOffset, retSize
-PUSH2 $FAKE_RETURNDATA_MEM_LOC
-// 0x20, fakeReturnData, resultDataOffset+0x20, resultDataLength, :jumpback, retOffset, retSize
-PUSH1 0x20
-// fakeReturnData+0x20, resultDataOffset+0x20, resultDataLength, :jumpback, retOffset, retSize
-ADD
-// :jumpback, retOffset, retSize
-RETURNDATACOPY
-
 // decode success return value
 // 0x20, :jumpback, retOffset, retSize
 PUSH1 0x20
@@ -234,25 +190,105 @@ RETURNDATACOPY
 PUSH2 $SCRATCH_MEM_LOC
 // success, :jumpback, retOffset, retSize
 MLOAD
-
-// Use the returndatacopy override to copy to retOffset
 // retSize, :jumpback, retOffset, success
 SWAP3
-// :jumpback, retSize, retOffset, success
+// retOffset, :jumpback, retSize, success
+SWAP2
+// :jumpback, retOffset, retSize, success
 SWAP1
-// retOffset, retSize, :jumpback, success
+
+// decode call result offset
+// 0x20, :jumpback, retOffset, retSize, success
+PUSH1 0x20
+// 0x20, 0x20, :jumpback, retOffset, retSize, success
+DUP1
+// scratch, 0x20, 0x20, :jumpback, retOffset, retSize, success
+PUSH2 $SCRATCH_MEM_LOC
+// :jumpback, retOffset, retSize, success
+RETURNDATACOPY
+// scratch, :jumpback, retOffset, retSize, success
+PUSH2 $SCRATCH_MEM_LOC
+// resultDataOffset, :jumpback, retOffset, retSize, success
+MLOAD
+
+// decode call result length 
+// 0x20, resultDataOffset, :jumpback, retOffset, retSize, success
+PUSH1 0x20
+// resultDataOffset, 0x20, resultDataOffset, :jumpback, retOffset, retSize, success
+DUP2
+// scratch, resultDataOffset, 0x20, resultDataOffset, :jumpback, retOffset, retSize, success
+PUSH2 $SCRATCH_MEM_LOC
+// resultDataOffset, :jumpback, retOffset, retSize, success
+RETURNDATACOPY
+// scratch, resultDataOffset, :jumpback, retOffset, retSize, success
+PUSH2 $SCRATCH_MEM_LOC
+// resultDataLength, resultDataOffset, :jumpback, retOffset, retSize, success
+MLOAD
+
+// copy call result data to scratch
+// resultDataLength, resultDataLength, resultDataOffset, :jumpback, retOffset, retSize, success
+DUP1
+// resultDataOffset, resultDataLength, resultDataLength, :jumpback, retOffset, retSize, success
 SWAP2
-// strict=false, retOffset, retSize, :jumpback, success
+// 0x20, resultDataOffset, resultDataLength, resultDataLength, :jumpback, retOffset, retSize, success
+PUSH1 0x20
+// resultDataOffset+0x20, resultDataLength, resultDataLength, :jumpback, retOffset, retSize, success
+ADD
+// scratch, resultDataOffset+0x20, resultDataLength, resultDataLength, :jumpback, retOffset, retSize, success
+PUSH2 $SCRATCH_MEM_LOC
+// resultDataLength, :jumpback, retOffset, retSize, success
+RETURNDATACOPY
+
+// staticcall the identity precompile (0x04) to fill EVM RETURNDATA with call result
+// identityRetSize=0, resultDataLength, :jumpback, retOffset, retSize, success
 PUSH1 0x00
-// retSize, retOffset, strict, :jumpback, success
-SWAP2
-// copyStart=0x00, retSize, retOffset, strict, :jumpback, success
-PUSH1 0x00
-// retSize, copyStart, retOffset, strict, :jumpback, success
+// resultDataLength, identityRetSize, :jumpback, retOffset, retSize, success
 SWAP1
-// retOffset, copyStart, retSize, strict, :jumpback, success
+// identityRetOffset=0, resultDataLength, identityRetSize, :jumpback, retOffset, retSize, success
+PUSH1 0x00
+// identityArgSize=resultDataLength, identityRetOffset, identityRetSize, :jumpback, retOffset, retSize, success
+SWAP1
+// identityArgOffset=scratch, identityArgSize, identityRetOffset, identityRetSize, :jumpback, retOffset, retSize, success
+PUSH2 $SCRATCH_MEM_LOC
+// address=0x04, identityArgOffset, identityArgSize, identityRetOffset, identityRetSize, :jumpback, retOffset, retSize, success
+PUSH1 0x04
+// gas, address, identityArgOffset, identityArgSize, identityRetOffset, identityRetSize, :jumpback, retOffset, retSize, success
+GAS
+// identitySuccess=true, :jumpback, retOffset, retSize, success
+STATICCALL
+// :jumpback, retOffset, retSize, success
+POP
+
+// Copy (up to) retSize bytes to to retOffset
+// retSize, retOffset, :jumpback, success
 SWAP2
-// ::returndatacopy, retOffset, copyStart, retSize, strict, :jumpback, success
-PUSH3 ::returndatacopy
-// retOffset, copyStart, retSize, strict, :jumpback, success
+// maxRetSize, retSize, retOffset, :jumpback, success
+RETURNDATASIZE
+// maxRetSize, maxRetSize, retSize, retOffset, :jumpback, success
+DUP1
+// retSize, maxRetSize, maxRetSize, retSize, retOffset, :jumpback, success
+DUP3
+// retSize > maxRetSize, maxRetSize, retSize, retOffset, :jumpback, success
+GT
+// retSize <= maxRetSize, maxRetSize, retSize, retOffset, :jumpback, success
+ISZERO
+// clamped, retSize <= maxRetSize, maxRetSize, retSize, retOffset, :jumpback, success
+PUSH3 :clamped
+// maxRetSize, retSize, retOffset, :jumpback, success
+JUMPI
+    // retSize, maxRetSize, retOffset, :jumpback, success
+    SWAP1
+:clamped
+JUMPDEST
+// retSize, retOffset, :jumpback, success
+POP
+// retCopyStart=0x00, retSize, retOffset, :jumpback, success
+PUSH1 0x00
+// retSize, retCopyStart, retOffset, :jumpback, success
+SWAP1
+// retOffset, retCopyStart, retSize, :jumpback, success
+SWAP2
+// :jumpback, success
+RETURNDATACOPY
+// success
 JUMP

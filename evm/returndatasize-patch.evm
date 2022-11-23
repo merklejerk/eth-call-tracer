@@ -1,5 +1,0 @@
-// fakeReturnData
-PUSH2 $FAKE_RETURNDATA_MEM_LOC
-// fakeReturnDataSize
-MLOAD
-
