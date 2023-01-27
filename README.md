@@ -27,7 +27,7 @@ This is a fairly naive implementation which first relies on `eth_createAccessLis
 - MEV bots, keepers, or indexers looking that need fast, high volume tracing.
 
 ## What Works
-- Caputuring every type of external call (`CALL`, `CALLCODE`, `DELEGATECALL`, `STATICCALL`) and their result.
+- Capturing every type of external call (`CALL`, `CALLCODE`, `DELEGATECALL`, `STATICCALL`) and their result.
 - Capturing events (`LOG0 - LOG4`).
 - Capturing storage writes, old values and new values.
 - Bytecode offset translation for `CODECOPY`, `CODESIZE`, `EXTCODECOPY`, `EXTCODESIZE`, and `EXTCODEHASH` when referencing self.

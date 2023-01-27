@@ -218,11 +218,20 @@ contract SpyHooks {
 }
 
 contract Origin {
+    address constant RUNNER_ADDRESS = 0x9000000000000000000000000000000000000001;
+
     function call(address target, uint256 value, bytes calldata data)
         external
         returns (bool success, bytes memory returnData)
     {
+        if (msg.sender != 0x9000000000000000000000000000000000000001) {
+            assembly { return(0x00, 0x00) }
+        }
         (success, returnData) = target.call{value: value}(data);
+    }
+
+    fallback(bytes calldata) external payable returns (bytes memory) {
+        return "";
     }
 
     receive() external payable {}
@@ -252,6 +261,7 @@ contract Runner is Spy {
     bool isPoS;
 
     function run(RunContext calldata ctx) external returns (RunResult memory result) {
+        require(msg.sender == tx.origin, 'INVALID_RUN_CALLER');
         _setup();
         (result.success, result.returnData) =
             ctx.txOrigin.call(ctx.txTo, ctx.txValue, ctx.txData);

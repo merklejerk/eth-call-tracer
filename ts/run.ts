@@ -155,7 +155,6 @@ async function getTransactionAccounts(
         ...Object
             .entries(bytecodes)
             .filter(([a, b]) => b !== '0x')
-            // .filter(([a]) => a == '0x1522900b6dafac587d499a862861c0869be6e428')
             .map(([a, b]) => ({ [a]: b })),
     );
 }
@@ -183,7 +182,6 @@ async function getAccessListAsync(eth: FlexEther, txParams: TxParams)
             gasPrice: toHex(txParams.gasPrice),
             value: toHex(txParams.value),
             data: txParams.data,
-            block: txParams.block || undefined, 
         },
         ...(txParams.block ? [toHex(txParams.block)] : []),
     ]);
