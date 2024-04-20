@@ -15,7 +15,7 @@ import { createJumpRouterCode } from './jump-router';
 
 import * as HOOKS_ARTIFACT from '../out/Runner.sol/SpyHooks.json';
 import { createExtCodeCopyRouter, createExtCodeHashRouter, createExtCodeSizeRouter } from './ext-router';
-import { toBytes, toHex } from 'viem';
+import { Hex, toBytes, toHex } from 'viem';
 
 export interface PatchOptions {
     hooksAddress: string;
@@ -60,7 +60,7 @@ const RAW_FRAGMENTS = Object.assign(
     ...ALL_FRAGMENT_NAMES.map(n => ({ [n]: loadAsmFragment(n) })),
 );
 
-export function patchBytecode(bytecode: string, opts: PatchOptions): string {
+export function patchBytecode(bytecode: Hex, opts: PatchOptions): Hex {
     if (bytecode === '0x') {
         return bytecode;
     }

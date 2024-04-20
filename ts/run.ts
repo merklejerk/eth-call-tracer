@@ -14,7 +14,7 @@ import { mainnet } from 'viem/chains';
 
 const NULL_ADDRESS = '0x0000000000000000000000000000000000000000';
 const NULL_BYTES = '0x';
-const EMPTY_HASH = zeroHash;
+const EMPTY_HASH = keccak256('0x');
 const RUNNER_ADDRESS = '0x9000000000000000000000000000000000000001' as Address;
 const HOOKS_ADDRESS = '0x9000000000000000000000000000000000000002' as Address;
 
@@ -72,66 +72,9 @@ async function run(argv): Promise<void> {
     if (!argv.quiet) {
         console.debug(tx);
     }
-    const accounts = await getTransactionAccounts(client, tx);
-    const r = await timeItAsync(client.readContract({
-        abi: RUNNER_ARTIFACT.abi,
-        address: RUNNER_ADDRESS,
-        functionName: 'run',
-        account: tx.from,
-        ...(typeof(tx.block) === 'string'
-            ? ({ blockTag: tx.block })
-            : ({ blockNumber: BigInt(tx.block) })
-        ),
-        args: [
-            {
-                txOrigin: tx.from,
-                txTo: tx.to,
-                txValue: tx.value,
-                txData: tx.data,
-                txGas: 100e6,
-                txGasPrice: tx.gasPrice,
-            },
-        ],
-        stateOverride: [
-            {
-                address: tx.from,
-                code: ORIGIN_ARTIFACT.deployedBytecode.object as Hex,
-            },
-            {
-                address: RUNNER_ADDRESS,
-                code: RUNNER_ARTIFACT.deployedBytecode.object as Hex,
-            },
-            {
-                address: HOOKS_ADDRESS,
-                code: HOOKS_ARTIFACT.deployedBytecode.object as Hex,
-            },
-            ...Object.entries(getPatchedContractOverrides(
-                accounts,
-                {
-                    hooksAddress: HOOKS_ADDRESS,
-                    origin: tx.from,
-                    logsOnly: argv.logsOnly,
-                    originalStates: Object.assign(
-                        {},
-                        ...Object.keys(accounts).map(([a, c]) => ({
-                            [a]: {
-                                code: c,
-                                codeHash: keccak256(c as Hex),
-                            },
-                        })),
-                        {
-                            [tx.from.toLowerCase()]: { code: NULL_BYTES, codeHash: EMPTY_HASH },
-                            [RUNNER_ADDRESS.toLowerCase()]: { code: NULL_BYTES, codeHash: EMPTY_HASH },
-                            [HOOKS_ADDRESS.toLowerCase()]: { code: NULL_BYTES, codeHash: EMPTY_HASH },
-                        },
-                    ),
-                },
-            )).map(([address, {code}]) => ({
-                address: address as Address, code: code as Hex,
-            })),
-        ],
-    }));
+    const r = await buildTrace({ client, tx });
     console.log(r);
+    process.exit();
     // console.log(JSON.stringify(cleanResultObject(r), null, '\t'));
 }
 
@@ -145,38 +88,25 @@ interface TxParams {
     block?: number;
 }
 
-async function getTransactionAccounts(
+async function getInitialTransactionAccounts(
     client: PublicClient,
     txParams: TxParams,
-): Promise<{ [address: string]: string }> {
-    let addresses = Object.keys(Object.assign(
+): Promise<Address[]> {
+    return Object.keys(Object.assign(
         { [txParams.to.toLowerCase()]: true },
         ...(await getAccessListAsync(client, txParams))
             .map(e => ({[e.address.toLowerCase()]: true })),
     )) as Address[];
-    let bytecodes: { [addr: string]: string } = Object.assign(
-        {},
-        ...(await Promise.all(addresses.map(a => client.getBytecode({ address: a}))))
-            .map((b, i) => ({ [addresses[i]]: b })),
-    );
-    return Object.assign(
-        {},
-        ...Object
-            .entries(bytecodes)
-            .filter(([, b]) => b !== '0x')
-            .map(([a, b]) => ({ [a]: b })),
-    );
 }
 
-function getPatchedContractOverrides(
-    accounts: { [address: string]: string },
-    patchOpts: PatchOptions,
-): { [address: string]: { code: string } } {
-    return Object.assign(
-        {},
-        ...Object.entries(accounts).map(
-            ([a, c]) => ({ [a]: { code: patchBytecode(c, patchOpts) } }),
-        ),
+async function getBytecodes(
+    client: PublicClient,
+    addresses: Address[],
+): Promise<{ [address: Address]: Hex }> {
+    return Object.assign({},
+        ...await Promise.all(addresses.map(async address => {
+            return { [address]: await client.getBytecode({ address }) };
+        })),
     );
 }
 
@@ -219,4 +149,119 @@ function cleanResultObject(o: any): any {
         }));
     }
     return o;
+}
+
+enum CallType {
+    Call = 0,
+    Static = 1,
+    Delegate = 2,
+    Code = 3,
+}
+
+interface RunResult {
+    succesS: boolean;
+    returnData: Hex;
+    spy_calls: Array<{
+        index: bigint;
+        context: Address;
+        callType: CallType;
+        to: Address;
+        value: bigint;
+        gas: bigint;
+        data: Hex;
+        result: Hex;
+        success: boolean;
+        gasUsed: bigint;
+    }>;
+    spy_logs: Array<{
+        index: bigint;
+        context: Address;
+        numTopics: number;
+        topics: Hex[];
+        data: Hex;
+    }>;
+}
+async function buildTrace(opts: {
+    client: PublicClient;
+    tx: TxParams;
+    maxIterations?: number;
+}): Promise<RunResult> {
+    const { client, tx } = opts;
+    const maxIterations = opts.maxIterations ?? 100;
+    const toCachedCode = (original: Hex, patched: Hex) => ({
+        original,
+        patched,
+        originalHash: keccak256(original),
+        patchedHash: keccak256(patched),
+    });
+    const codeByAddress = {
+        [tx.from.toLowerCase()]: toCachedCode('0x', ORIGIN_ARTIFACT.deployedBytecode.object as Hex),
+        [RUNNER_ADDRESS]: toCachedCode('0x', RUNNER_ARTIFACT.deployedBytecode.object as Hex),
+        [HOOKS_ADDRESS]: toCachedCode('0x', HOOKS_ARTIFACT.deployedBytecode.object as Hex),
+    };
+    let unknowns = await getInitialTransactionAccounts(client, tx);
+    let r: RunResult | null = null;
+    for (let round = 0; round < maxIterations; ++round) {
+        Object.assign(
+            codeByAddress,
+            ...Object.entries(await getBytecodes(client, unknowns))
+                .map(([address, code]) => ({
+                    [address.toLowerCase()]: toCachedCode(code, '0x')
+                })),
+        );
+        const patchOpts: PatchOptions = {
+            hooksAddress: HOOKS_ADDRESS,
+            origin: tx.from,
+            originalStates: Object.assign(
+                {},
+                ...Object.entries(codeByAddress)
+                    .map(([ addr, { original, originalHash } ]) => ({
+                        [addr]: { code: original, codeHash: originalHash },
+                    })),
+            ),
+        }
+        for (const addr of unknowns) {
+            codeByAddress[addr].patched = patchBytecode(codeByAddress[addr].original, patchOpts);
+            codeByAddress[addr].patchedHash = keccak256(codeByAddress[addr].patched);
+        }
+        r = await client.readContract({
+            abi: RUNNER_ARTIFACT.abi,
+            address: RUNNER_ADDRESS,
+            functionName: 'run',
+            account: tx.from,
+            ...(typeof(tx.block) === 'string'
+                ? ({ blockTag: tx.block })
+                : ({ blockNumber: BigInt(tx.block) })
+            ),
+            args: [
+                {
+                    txOrigin: tx.from,
+                    txTo: tx.to,
+                    txValue: tx.value,
+                    txData: tx.data,
+                    txGas: 100e6,
+                    txGasPrice: tx.gasPrice,
+                },
+            ],
+            stateOverride: Object.entries(codeByAddress).map(([addr, codes]) => ({
+                address: addr as Address,
+                code: codes.patched,
+            })),
+        }) as RunResult;
+        unknowns = [];
+        for (const c of r.spy_calls) {
+            const to = c.to.toLowerCase() as Address;
+            if (!(to in codeByAddress)
+                && c.callType !== CallType.Static
+                && c.success)
+            {
+                unknowns.push(to);
+            }
+        }
+        if (unknowns.length === 0) {
+            break;
+        }
+        console.log(unknowns);
+    }
+    return r;
 }
