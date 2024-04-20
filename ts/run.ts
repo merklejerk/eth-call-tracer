@@ -72,7 +72,7 @@ async function run(argv): Promise<void> {
     if (!argv.quiet) {
         console.debug(tx);
     }
-    const r = await buildTrace({ client, tx });
+    const r = await timeItAsync(buildTrace({ client, tx }), 'buildTrace()');
     console.log(r);
     process.exit();
     // console.log(JSON.stringify(cleanResultObject(r), null, '\t'));
@@ -201,7 +201,8 @@ async function buildTrace(opts: {
     };
     let unknowns = await getInitialTransactionAccounts(client, tx);
     let r: RunResult | null = null;
-    for (let round = 0; round < maxIterations; ++round) {
+    let round = 0;
+    for (; round < maxIterations; ++round) {
         Object.assign(
             codeByAddress,
             ...Object.entries(await getBytecodes(client, unknowns))
@@ -261,7 +262,7 @@ async function buildTrace(opts: {
         if (unknowns.length === 0) {
             break;
         }
-        console.log(unknowns);
     }
+    console.debug(`Found all overrides after ${round} rounds!`);
     return r;
 }
