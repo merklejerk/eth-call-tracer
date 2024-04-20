@@ -277,7 +277,7 @@ contract Runner is Spy {
     }
 
     function _detectPoS() private view returns (bool) {
-        return block.difficulty > type(uint128).max;
+        return block.prevrandao > type(uint128).max;
     }
 
     function _detect2929() private view returns (bool) {
@@ -289,6 +289,6 @@ contract Runner is Spy {
     }
 
     function _randomUint256() private view returns (uint256) {
-        return uint256(keccak256(abi.encode(gasleft(), block.difficulty, tx.origin)));
+        return uint256(keccak256(abi.encode(msg.data, gasleft(), block.prevrandao, tx.origin)));
     }
 }

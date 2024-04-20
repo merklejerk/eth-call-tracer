@@ -1,6 +1,6 @@
 import * as crypto from 'crypto';
 import * as fs from 'fs/promises';
-import * as ethjs from 'ethereumjs-util';
+import { toBytes } from 'viem';
 
 export const OPCODES = {
     CALL: 0xF1,
@@ -94,7 +94,7 @@ const PUSH_PARAM_REGEXES = [
 
 export interface Instruction {
     opcode: number;
-    payload?: Buffer | number[] | string | number;
+    payload?: Uint8Array | string | number;
     label?: string;
     originalOffset?: number;
     offset?: number;
@@ -145,7 +145,7 @@ export function assemble(asm, env={}): Instruction[] {
             }
             instructions.push({
                 opcode: OPCODES[op],
-                payload: rawPayload,
+                payload: /^-?\d+$/.test(rawPayload) ? Number(rawPayload) : rawPayload,
                 scopeId: scopeId,
             });
         } else {
@@ -166,7 +166,7 @@ export function randomId(): string {
     return crypto.randomBytes(16).toString('hex');
 }
 
-export function disassemble(bytecode: number[] | Buffer): Instruction[] {
+export function disassemble(bytecode: Uint8Array): Instruction[] {
     const instructions = [] as Instruction[];
     let currentBlock = [];
     let currentScopeId = randomId();
@@ -203,7 +203,7 @@ export function disassemble(bytecode: number[] | Buffer): Instruction[] {
                     const n = getOpcodePayloadSize(op);
                     if (n > 0) {
                         if (bytecode.length < i + 1 + n) {
-                            console.log(`illegal payload size`);
+                            console.warn(`illegal payload size`);
                             // Payload doesn't exist.
                             // Abort the currentBlock block.
                             currentBlock = [];
@@ -246,7 +246,7 @@ export function getCodeSize(instructions: Instruction[]): number {
 
 export function getInstructionSize(instruction: Instruction): number {
     if (instruction.opcode === OPCODES.DATA) {
-        return (instruction.payload as Buffer).length;
+        return (instruction.payload as Uint8Array).length;
     }
     return getOpcodeSize(instruction.opcode);
 }
@@ -361,37 +361,18 @@ export function linkCodes(...codes: Instruction[][]): void {
 }
 
 function parsePayload(
-    payload: string | number | number[] | Buffer,
+    payload: string | number | Uint8Array,
     size: number,
 ): Buffer {
     if (payload === undefined) {
         throw new Error(`Encountered undefined payload: ${payload}`);
     }
-    if (Buffer.isBuffer(payload)) {
+    if (payload instanceof Uint8Array) {
         const buf = Buffer.alloc(size);
-        payload.copy(buf);
+        buf.set(payload, size - buf.length);
         return buf;
     }
-    if (typeof(payload) === 'string') {
-        if (payload.startsWith('0x')) {
-            return ethjs.setLengthLeft(payload, size);
-        }
-        return ethjs.setLengthLeft(
-            '0x' + BigInt(payload).toString(16),
-            size,
-        );
-    }
-    if (typeof(payload) === 'number') {
-        return ethjs.setLengthLeft(payload, size);
-    }
-    if (payload.length !== size) {
-        throw new Error(`Invalid payload size. Expected ${size} but got ${payload.length}`);
-    }
-    const buf = Buffer.alloc(size);
-    for (let i = 0; i < payload.length; ++i) {
-        buf.writeUint8(payload[i], i);
-    }
-    return buf;
+    return Buffer.from(toBytes(payload, { size }));
 }
 
 export function dupeCode(instructions: Instruction[]): Instruction[] {

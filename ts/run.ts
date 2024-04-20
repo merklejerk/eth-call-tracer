@@ -1,59 +1,50 @@
 import 'colors';
-import * as ethjs from 'ethereumjs-util';
-import dotenv from 'dotenv';
-import { env as ENV, openStdin } from 'process';
+import { env as ENV } from 'process';
 import process from 'process';
-import FlexContract from 'flex-contract';
-import FlexEther from 'flex-ether';
-import { toHex } from 'flex-ether/src/util.js';
 import yargs from 'yargs';
+import { Address, createPublicClient, Hex, http, keccak256, PublicClient, toHex, Transaction, TransactionReceipt, webSocket, zeroHash } from 'viem';
 
-dotenv.config();
-
-import RUNNER_ARTIFACT from '../out/Runner.sol/Runner.json';
-import ORIGIN_ARTIFACT from '../out/Runner.sol/Origin.json';
-import HOOKS_ARTIFACT from '../out/Runner.sol/SpyHooks.json';
+import * as RUNNER_ARTIFACT from '../out/Runner.sol/Runner.json';
+import * as ORIGIN_ARTIFACT from '../out/Runner.sol/Origin.json';
+import * as HOOKS_ARTIFACT from '../out/Runner.sol/SpyHooks.json';
 
 import { patchBytecode, PatchOptions } from './patch';
 import { timeItAsync } from './util';
+import { mainnet } from 'viem/chains';
 
 const NULL_ADDRESS = '0x0000000000000000000000000000000000000000';
 const NULL_BYTES = '0x';
-const EMPTY_HASH = ethjs.bufferToHex(ethjs.keccak256(Buffer.alloc(0)));
-const RUNNER_ADDRESS = '0x9000000000000000000000000000000000000001';
-const HOOKS_ADDRESS = '0x9000000000000000000000000000000000000002';
+const EMPTY_HASH = zeroHash;
+const RUNNER_ADDRESS = '0x9000000000000000000000000000000000000001' as Address;
+const HOOKS_ADDRESS = '0x9000000000000000000000000000000000000002' as Address;
 
 yargs(process.argv.slice(2)).command('$0', 'run', yargs =>
     yargs
         .option('rpc-url', { type: 'string', desc: 'node RPC url' })
         .option('from', { type: 'string', desc: 'TX caller', default: NULL_ADDRESS })
         .option('to', { type: 'string', desc: 'TX target', default: NULL_ADDRESS })
-        .option('value', { type: 'string', desc: 'TX value' })
-        .option('block', { type: ['number', 'string'], desc: 'block number' })
-        .option('gas-price', { type: 'number', desc: 'gas price (gwei)' })
+        .option('value', { type: 'number', desc: 'TX value', coerce: x => BigInt(x) })
+        .option('block', { type: 'string', desc: 'block number', coerce: x => /^\d+$/.test(x) ? Number(x) : x })
+        .option('gas-price', { type: 'number', desc: 'gas price (gwei)', coerce: x => BigInt(x) })
         .option('gas', { type: 'number', desc: 'gas' })
         .option('data', { type: 'string', desc: 'TX data', default: NULL_BYTES })
         .option('tx', { type: 'string', desc: 'historic TX hash' })
         .option('quiet', { type: 'boolean', alias: 'q' })
         .option('logs-only', { type: 'boolean', alias: 'L' }),
     argv => run(argv),
-).argv;
+).parse();
 
 async function run(argv): Promise<void> {
     const rpcUrl = argv.rpcUrl || ENV.NODE_RPC;
     if (!rpcUrl) {
         throw new Error(`no RPC URL set!`);
     }
-    const eth = new FlexEther({ providerURI: rpcUrl });
-    const runner = new FlexContract(
-        RUNNER_ARTIFACT.abi,
-        RUNNER_ADDRESS,
-        { eth },
-    );
+    const transport = /^wss?:\/\//.test(rpcUrl) ? webSocket(rpcUrl) : http(rpcUrl);
+    const client = (createPublicClient as any)({ transport, chain: mainnet }) as PublicClient;
     let tx: TxParams;
     if (argv.tx) {
-        const tx_ = await eth.getTransaction(argv.tx);
-        const receipt = await eth.getTransactionReceipt(argv.tx);
+        const tx_ = await client.getTransaction({ hash: argv.tx });
+        const receipt = await client.getTransactionReceipt({ hash: argv.tx });
         tx = {
             from: tx_.from,
             to: tx_.to,
@@ -61,11 +52,11 @@ async function run(argv): Promise<void> {
             value: argv.value !== undefined ? argv.value : tx_.value,
             gas: argv.gas !== undefined ? argv.gas : tx_.gas,
             gasPrice: argv.gasPrice !== undefined
-                ? (BigInt(argv.gasPrice) * BigInt(1e9)).toString()
+                ? BigInt(argv.gasPrice) * BigInt(1e9)
                 : tx_.gasPrice,
             block: argv.block !== undefined
-                ? (typeof(argv.block) === 'string' ? undefined : argv.block)
-                : receipt.blockNumber - 1,
+                ? argv.block
+                : Number(receipt.blockNumber) - 1,
         };
     } else {
         tx = {
@@ -81,80 +72,98 @@ async function run(argv): Promise<void> {
     if (!argv.quiet) {
         console.debug(tx);
     }
-    const accounts = await getTransactionAccounts(eth, tx);
-    const r = await timeItAsync(runner.run(
-        {
-            txOrigin: tx.from,
-            txTo: tx.to,
-            txValue: tx.value,
-            txData: tx.data,
-            txGas: 100e6,
-            txGasPrice: tx.gasPrice,
-        },
-    ).call(
-        {
-            block: tx.block,
-            overrides: {
-                [tx.from]: { code: ORIGIN_ARTIFACT.deployedBytecode.object },
-                [runner.address]: { code: RUNNER_ARTIFACT.deployedBytecode.object },
-                [HOOKS_ADDRESS]: { code: HOOKS_ARTIFACT.deployedBytecode.object },
-                ...getPatchedContractOverrides(
-                    accounts,
-                    {
-                        hooksAddress: HOOKS_ADDRESS,
-                        origin: tx.from,
-                        logsOnly: argv.logsOnly,
-                        originalStates: Object.assign(
-                            {},
-                            ...Object.keys(accounts).map(([a, c]) => ({
-                                [a]: {
-                                    code: c,
-                                    codeHash: ethjs.bufferToHex(ethjs.keccak256(c)),
-                                },
-                            })),
-                            {
-                                [tx.from.toLowerCase()]: { code: NULL_BYTES, codeHash: EMPTY_HASH },
-                                [runner.address.toLowerCase()]: { code: NULL_BYTES, codeHash: EMPTY_HASH },
-                                [HOOKS_ADDRESS.toLowerCase()]: { code: NULL_BYTES, codeHash: EMPTY_HASH },
-                            },
-                        ),
-                    },
-                ),
+    const accounts = await getTransactionAccounts(client, tx);
+    const r = await timeItAsync(client.readContract({
+        abi: RUNNER_ARTIFACT.abi,
+        address: RUNNER_ADDRESS,
+        functionName: 'run',
+        account: tx.from,
+        ...(typeof(tx.block) === 'string'
+            ? ({ blockTag: tx.block })
+            : ({ blockNumber: BigInt(tx.block) })
+        ),
+        args: [
+            {
+                txOrigin: tx.from,
+                txTo: tx.to,
+                txValue: tx.value,
+                txData: tx.data,
+                txGas: 100e6,
+                txGasPrice: tx.gasPrice,
             },
-        },
-    ), 'eth_call');
-    console.log(JSON.stringify(cleanResultObject(r), null, '\t'));
+        ],
+        stateOverride: [
+            {
+                address: tx.from,
+                code: ORIGIN_ARTIFACT.deployedBytecode.object as Hex,
+            },
+            {
+                address: RUNNER_ADDRESS,
+                code: RUNNER_ARTIFACT.deployedBytecode.object as Hex,
+            },
+            {
+                address: HOOKS_ADDRESS,
+                code: HOOKS_ARTIFACT.deployedBytecode.object as Hex,
+            },
+            ...Object.entries(getPatchedContractOverrides(
+                accounts,
+                {
+                    hooksAddress: HOOKS_ADDRESS,
+                    origin: tx.from,
+                    logsOnly: argv.logsOnly,
+                    originalStates: Object.assign(
+                        {},
+                        ...Object.keys(accounts).map(([a, c]) => ({
+                            [a]: {
+                                code: c,
+                                codeHash: keccak256(c as Hex),
+                            },
+                        })),
+                        {
+                            [tx.from.toLowerCase()]: { code: NULL_BYTES, codeHash: EMPTY_HASH },
+                            [RUNNER_ADDRESS.toLowerCase()]: { code: NULL_BYTES, codeHash: EMPTY_HASH },
+                            [HOOKS_ADDRESS.toLowerCase()]: { code: NULL_BYTES, codeHash: EMPTY_HASH },
+                        },
+                    ),
+                },
+            )).map(([address, {code}]) => ({
+                address: address as Address, code: code as Hex,
+            })),
+        ],
+    }));
+    console.log(r);
+    // console.log(JSON.stringify(cleanResultObject(r), null, '\t'));
 }
 
 interface TxParams {
-    from: string;
-    to: string;
-    value: string | number;
-    data: string;
+    from: Address;
+    to: Address;
+    value: bigint;
+    data: Hex;
     gas: number;
-    gasPrice: string | number;
+    gasPrice: bigint;
     block?: number;
 }
 
 async function getTransactionAccounts(
-    eth: FlexEther,
+    client: PublicClient,
     txParams: TxParams,
 ): Promise<{ [address: string]: string }> {
     let addresses = Object.keys(Object.assign(
         { [txParams.to.toLowerCase()]: true },
-        ...(await getAccessListAsync(eth, txParams))
+        ...(await getAccessListAsync(client, txParams))
             .map(e => ({[e.address.toLowerCase()]: true })),
-    ));
+    )) as Address[];
     let bytecodes: { [addr: string]: string } = Object.assign(
         {},
-        ...(await Promise.all(addresses.map(a => eth.getCode(a))))
+        ...(await Promise.all(addresses.map(a => client.getBytecode({ address: a}))))
             .map((b, i) => ({ [addresses[i]]: b })),
     );
     return Object.assign(
         {},
         ...Object
             .entries(bytecodes)
-            .filter(([a, b]) => b !== '0x')
+            .filter(([, b]) => b !== '0x')
             .map(([a, b]) => ({ [a]: b })),
     );
 }
@@ -171,21 +180,31 @@ function getPatchedContractOverrides(
     );
 }
 
-async function getAccessListAsync(eth: FlexEther, txParams: TxParams)
+async function getAccessListAsync(client: PublicClient, txParams: TxParams)
     : Promise<Array<{ address: string }>>
 {
-    const r = await eth.rpc._send('eth_createAccessList', [
-        {
-            to: txParams.to,
-            from: txParams.from,
-            gas: toHex(txParams.gas),
-            gasPrice: toHex(txParams.gasPrice),
-            value: toHex(txParams.value),
-            data: txParams.data,
-        },
-        ...(txParams.block ? [toHex(txParams.block)] : []),
-    ]);
-    return r.accessList;
+    try {
+        const {accessList} = await client.transport.request({
+            method: 'eth_createAccessList',
+            params: [
+                {
+                    to: txParams.to,
+                    from: txParams.from,
+                    gas: toHex(txParams.gas),
+                    gasPrice: toHex(txParams.gasPrice),
+                    value: toHex(txParams.value),
+                    data: txParams.data,
+                },
+                ...(txParams.block ? [toHex(txParams.block)] : []),
+            ]
+        }) as { accessList: Array<{ address: string }> };
+        return accessList;
+    } catch (err) {
+        if (err?.details !== 'Method not found') {
+            throw err;
+        }
+    }
+    return [];
 }
 
 function cleanResultObject(o: any): any {
