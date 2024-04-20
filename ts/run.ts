@@ -263,6 +263,6 @@ async function buildTrace(opts: {
             break;
         }
     }
-    console.debug(`Found all overrides after ${round} rounds!`);
+    console.debug(`Found all overrides after ${round+1} rounds!`);
     return r;
 }
