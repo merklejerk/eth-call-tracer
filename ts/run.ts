@@ -9,7 +9,7 @@ import * as ORIGIN_ARTIFACT from '../out/Runner.sol/Origin.json';
 import * as HOOKS_ARTIFACT from '../out/Runner.sol/SpyHooks.json';
 
 import { patchBytecode, PatchOptions } from './patch';
-import { timeItAsync } from './util';
+import { timeItAsync, timeItCumulative } from './util';
 import { mainnet } from 'viem/chains';
 
 const NULL_ADDRESS = '0x0000000000000000000000000000000000000000';
@@ -44,7 +44,6 @@ async function run(argv): Promise<void> {
     let tx: TxParams;
     if (argv.tx) {
         const tx_ = await client.getTransaction({ hash: argv.tx });
-        const receipt = await client.getTransactionReceipt({ hash: argv.tx });
         tx = {
             from: tx_.from,
             to: tx_.to,
@@ -56,7 +55,7 @@ async function run(argv): Promise<void> {
                 : tx_.gasPrice,
             block: argv.block !== undefined
                 ? argv.block
-                : Number(receipt.blockNumber) - 1,
+                : Number(tx_.blockNumber) - 1,
         };
     } else {
         tx = {
@@ -205,7 +204,7 @@ async function buildTrace(opts: {
     for (; round < maxIterations; ++round) {
         Object.assign(
             codeByAddress,
-            ...Object.entries(await getBytecodes(client, unknowns))
+            ...Object.entries(await timeItCumulative('getBytecodes', getBytecodes(client, unknowns)))
                 .map(([address, code]) => ({
                     [address.toLowerCase()]: toCachedCode(code, '0x')
                 })),
@@ -225,7 +224,7 @@ async function buildTrace(opts: {
             codeByAddress[addr].patched = patchBytecode(codeByAddress[addr].original, patchOpts);
             codeByAddress[addr].patchedHash = keccak256(codeByAddress[addr].patched);
         }
-        r = await client.readContract({
+        r = await timeItCumulative('readContract', client.readContract({
             abi: RUNNER_ARTIFACT.abi,
             address: RUNNER_ADDRESS,
             functionName: 'run',
@@ -248,7 +247,7 @@ async function buildTrace(opts: {
                 address: addr as Address,
                 code: codes.patched,
             })),
-        }) as RunResult;
+        })) as RunResult;
         unknowns = [];
         for (const c of r.spy_calls) {
             const to = c.to.toLowerCase() as Address;

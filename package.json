@@ -9,7 +9,9 @@
   },
   "scripts": {
     "build": "forge build && tsc -b",
-    "start": "node --enable-source-maps -r dotenv/config js/ts/run.js"
+    "start": "node --enable-source-maps -r dotenv/config js/ts/run.js",
+    "flame": "0x -- node --enable-source-maps -r dotenv/config js/ts/run.js"
+    
   },
   "author": "",
   "license": "AGPL-3.0",
