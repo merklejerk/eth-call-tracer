@@ -100,7 +100,11 @@ contract SpyHooks {
         uint256 value,
         bytes memory data
     ) external payable returns (bool success, bytes memory resultData, uint256 gasUsed) {
-        uint256 idx = SPY.consumeNextHookIndex();
+        bool isStaticCtx = _isStaticCallContext();
+        uint256 idx;
+        if (!isStaticCtx) {
+            idx = SPY.consumeNextHookIndex();
+        }
         assembly {
             switch callType
             case 0 { // CallType.Call
@@ -126,18 +130,35 @@ contract SpyHooks {
             mstore(resultData, returndatasize())
             returndatacopy(add(resultData, 0x20), 0, returndatasize())
         }
-        SPY.onSpyCall(Spy.Spy_CALL({
-            index: idx,
-            context: address(this),
-            callType: callType,
-            to: to,
-            value: value,
-            gas: gas_,
-            data: data,
-            result: resultData,
-            success: success,
-            gasUsed: gasUsed
-        }));
+        if (!isStaticCtx) {
+            SPY.onSpyCall(Spy.Spy_CALL({
+                index: idx,
+                context: address(this),
+                callType: callType,
+                to: to,
+                value: value,
+                gas: gas_,
+                data: data,
+                result: resultData,
+                success: success,
+                gasUsed: gasUsed
+            }));
+        }
+    }
+
+    function _isStaticCallContext() private returns (bool isStaticCtx) {
+        assembly ("memory-safe") {
+            mstore(0x00, shl(0x72ca127b, 224)) // this.__tryLog.selector
+            pop(call(address(), 0, gas(), 0x00, 0x04, 0x00, 0))
+            isStaticCtx := eq(returndatasize(), 1)
+        }
+    }
+
+    function __tryLog() external payable {
+        assembly ("memory-safe") {
+            log0(0x00, 0)
+            return(0x00, 1)
+        }
     }
 
     uint256 constant LOG0_GAS_OVERHEAD = 0; // TODO
@@ -259,6 +280,7 @@ contract Runner is Spy {
 
     bool is2929Enabled;
     bool isPoS;
+    mapping (address => bool) isKnownAddress;
 
     function run(RunContext calldata ctx) external returns (RunResult memory result) {
         require(msg.sender == tx.origin, 'INVALID_RUN_CALLER');
@@ -271,13 +293,61 @@ contract Runner is Spy {
         result.spy_logs = spy_logs;
     }
 
+    function runIterative(
+        RunContext calldata ctx,
+        address[] memory knownAddresses
+    )
+        external returns (
+            RunResult memory result,
+            bytes[] memory unknownBytecodes
+        )
+    {
+        require(msg.sender == tx.origin, 'INVALID_RUN_CALLER');
+        _setup();
+        (result.success, result.returnData) =
+            ctx.txOrigin.call(ctx.txTo, ctx.txValue, ctx.txData);
+        result.spy_calls = spy_calls;
+        result.spy_sstores = spy_sstores;
+        result.spy_sloads = spy_sloads;
+        result.spy_logs = spy_logs;
+
+        for (uint256 i; i < knownAddresses.length; ++i) {
+            isKnownAddress[knownAddresses[i]] = true;
+        }
+        uint256 numUnknowns;
+        for (uint256 i; i < result.spy_calls.length; ++i) {
+            Spy_CALL memory c = result.spy_calls[i];
+            if (c.callType == CallType.Static || !c.success) {
+                continue;
+            }
+            address callee = c.to;
+            if (!isKnownAddress[callee]) {
+                ++numUnknowns;
+            }
+        }
+        unknownBytecodes = new bytes[](numUnknowns);
+        for (uint256 i; i < result.spy_calls.length; ++i) {
+            Spy_CALL memory c = result.spy_calls[i];
+            if (c.callType == CallType.Static || !c.success) {
+                continue;
+            }
+            address callee = c.to;
+            if (isKnownAddress[callee]) {
+                continue;
+            }
+            isKnownAddress[callee] = true;
+            // Store in reverse order.
+            unknownBytecodes[--numUnknowns] = callee.code;
+        }
+    }
+
     function _setup() private {
         is2929Enabled = _detect2929();
         isPoS = _detect2929();
     }
 
     function _detectPoS() private view returns (bool) {
-        return block.difficulty > type(uint128).max;
+        return block.prevrandao > type(uint128).max;
     }
 
     function _detect2929() private view returns (bool) {
@@ -289,6 +359,6 @@ contract Runner is Spy {
     }
 
     function _randomUint256() private view returns (uint256) {
-        return uint256(keccak256(abi.encode(gasleft(), block.difficulty, tx.origin)));
+        return uint256(keccak256(abi.encode(msg.data, gasleft(), block.prevrandao, tx.origin)));
     }
 }

@@ -1,59 +1,49 @@
 import 'colors';
-import * as ethjs from 'ethereumjs-util';
-import dotenv from 'dotenv';
-import { env as ENV, openStdin } from 'process';
+import { env as ENV } from 'process';
 import process from 'process';
-import FlexContract from 'flex-contract';
-import FlexEther from 'flex-ether';
-import { toHex } from 'flex-ether/src/util.js';
 import yargs from 'yargs';
+import { Address, createPublicClient, Hex, http, keccak256, PublicClient, toHex, Transaction, TransactionReceipt, webSocket, zeroHash } from 'viem';
 
-dotenv.config();
-
-import RUNNER_ARTIFACT from '../out/Runner.sol/Runner.json';
-import ORIGIN_ARTIFACT from '../out/Runner.sol/Origin.json';
-import HOOKS_ARTIFACT from '../out/Runner.sol/SpyHooks.json';
+import * as RUNNER_ARTIFACT from '../out/Runner.sol/Runner.json';
+import * as ORIGIN_ARTIFACT from '../out/Runner.sol/Origin.json';
+import * as HOOKS_ARTIFACT from '../out/Runner.sol/SpyHooks.json';
 
 import { patchBytecode, PatchOptions } from './patch';
-import { timeItAsync } from './util';
+import { timeItAsync, timeItCumulative, timeItCumulativeSync } from './util';
+import { mainnet } from 'viem/chains';
 
 const NULL_ADDRESS = '0x0000000000000000000000000000000000000000';
 const NULL_BYTES = '0x';
-const EMPTY_HASH = ethjs.bufferToHex(ethjs.keccak256(Buffer.alloc(0)));
-const RUNNER_ADDRESS = '0x9000000000000000000000000000000000000001';
-const HOOKS_ADDRESS = '0x9000000000000000000000000000000000000002';
+const EMPTY_HASH = keccak256('0x');
+const RUNNER_ADDRESS = '0x9000000000000000000000000000000000000001' as Address;
+const HOOKS_ADDRESS = '0x9000000000000000000000000000000000000002' as Address;
 
 yargs(process.argv.slice(2)).command('$0', 'run', yargs =>
     yargs
         .option('rpc-url', { type: 'string', desc: 'node RPC url' })
         .option('from', { type: 'string', desc: 'TX caller', default: NULL_ADDRESS })
         .option('to', { type: 'string', desc: 'TX target', default: NULL_ADDRESS })
-        .option('value', { type: 'string', desc: 'TX value' })
-        .option('block', { type: ['number', 'string'], desc: 'block number' })
-        .option('gas-price', { type: 'number', desc: 'gas price (gwei)' })
+        .option('value', { type: 'number', desc: 'TX value', coerce: x => BigInt(x) })
+        .option('block', { type: 'string', desc: 'block number', coerce: x => /^\d+$/.test(x) ? Number(x) : x })
+        .option('gas-price', { type: 'number', desc: 'gas price (gwei)', coerce: x => BigInt(x) })
         .option('gas', { type: 'number', desc: 'gas' })
         .option('data', { type: 'string', desc: 'TX data', default: NULL_BYTES })
         .option('tx', { type: 'string', desc: 'historic TX hash' })
         .option('quiet', { type: 'boolean', alias: 'q' })
         .option('logs-only', { type: 'boolean', alias: 'L' }),
     argv => run(argv),
-).argv;
+).parse();
 
 async function run(argv): Promise<void> {
     const rpcUrl = argv.rpcUrl || ENV.NODE_RPC;
     if (!rpcUrl) {
         throw new Error(`no RPC URL set!`);
     }
-    const eth = new FlexEther({ providerURI: rpcUrl });
-    const runner = new FlexContract(
-        RUNNER_ARTIFACT.abi,
-        RUNNER_ADDRESS,
-        { eth },
-    );
+    const transport = /^wss?:\/\//.test(rpcUrl) ? webSocket(rpcUrl) : http(rpcUrl);
+    const client = (createPublicClient as any)({ transport, chain: mainnet }) as PublicClient;
     let tx: TxParams;
     if (argv.tx) {
-        const tx_ = await eth.getTransaction(argv.tx);
-        const receipt = await eth.getTransactionReceipt(argv.tx);
+        const tx_ = await client.getTransaction({ hash: argv.tx });
         tx = {
             from: tx_.from,
             to: tx_.to,
@@ -61,11 +51,11 @@ async function run(argv): Promise<void> {
             value: argv.value !== undefined ? argv.value : tx_.value,
             gas: argv.gas !== undefined ? argv.gas : tx_.gas,
             gasPrice: argv.gasPrice !== undefined
-                ? (BigInt(argv.gasPrice) * BigInt(1e9)).toString()
+                ? BigInt(argv.gasPrice) * BigInt(1e9)
                 : tx_.gasPrice,
             block: argv.block !== undefined
-                ? (typeof(argv.block) === 'string' ? undefined : argv.block)
-                : receipt.blockNumber - 1,
+                ? argv.block
+                : Number(tx_.blockNumber) - 1,
         };
     } else {
         tx = {
@@ -81,111 +71,70 @@ async function run(argv): Promise<void> {
     if (!argv.quiet) {
         console.debug(tx);
     }
-    const accounts = await getTransactionAccounts(eth, tx);
-    const r = await timeItAsync(runner.run(
-        {
-            txOrigin: tx.from,
-            txTo: tx.to,
-            txValue: tx.value,
-            txData: tx.data,
-            txGas: 100e6,
-            txGasPrice: tx.gasPrice,
-        },
-    ).call(
-        {
-            block: tx.block,
-            overrides: {
-                [tx.from]: { code: ORIGIN_ARTIFACT.deployedBytecode.object },
-                [runner.address]: { code: RUNNER_ARTIFACT.deployedBytecode.object },
-                [HOOKS_ADDRESS]: { code: HOOKS_ARTIFACT.deployedBytecode.object },
-                ...getPatchedContractOverrides(
-                    accounts,
-                    {
-                        hooksAddress: HOOKS_ADDRESS,
-                        origin: tx.from,
-                        logsOnly: argv.logsOnly,
-                        originalStates: Object.assign(
-                            {},
-                            ...Object.keys(accounts).map(([a, c]) => ({
-                                [a]: {
-                                    code: c,
-                                    codeHash: ethjs.bufferToHex(ethjs.keccak256(c)),
-                                },
-                            })),
-                            {
-                                [tx.from.toLowerCase()]: { code: NULL_BYTES, codeHash: EMPTY_HASH },
-                                [runner.address.toLowerCase()]: { code: NULL_BYTES, codeHash: EMPTY_HASH },
-                                [HOOKS_ADDRESS.toLowerCase()]: { code: NULL_BYTES, codeHash: EMPTY_HASH },
-                            },
-                        ),
-                    },
-                ),
-            },
-        },
-    ), 'eth_call');
-    console.log(JSON.stringify(cleanResultObject(r), null, '\t'));
+    const r = await timeItAsync(buildTrace({ client, tx }), 'buildTrace()');
+    console.log(r);
+    process.exit();
+    // console.log(JSON.stringify(cleanResultObject(r), null, '\t'));
 }
 
 interface TxParams {
-    from: string;
-    to: string;
-    value: string | number;
-    data: string;
+    from: Address;
+    to: Address;
+    value: bigint;
+    data: Hex;
     gas: number;
-    gasPrice: string | number;
+    gasPrice: bigint;
     block?: number;
 }
 
-async function getTransactionAccounts(
-    eth: FlexEther,
+async function getInitialTransactionAccounts(
+    client: PublicClient,
     txParams: TxParams,
-): Promise<{ [address: string]: string }> {
-    let addresses = Object.keys(Object.assign(
+): Promise<Address[]> {
+    return Object.keys(Object.assign(
         { [txParams.to.toLowerCase()]: true },
-        ...(await getAccessListAsync(eth, txParams))
+        ...(await getAccessListAsync(client, txParams))
             .map(e => ({[e.address.toLowerCase()]: true })),
-    ));
-    let bytecodes: { [addr: string]: string } = Object.assign(
-        {},
-        ...(await Promise.all(addresses.map(a => eth.getCode(a))))
-            .map((b, i) => ({ [addresses[i]]: b })),
-    );
-    return Object.assign(
-        {},
-        ...Object
-            .entries(bytecodes)
-            .filter(([a, b]) => b !== '0x')
-            .map(([a, b]) => ({ [a]: b })),
+    )) as Address[];
+}
+
+async function getBytecodes(
+    client: PublicClient,
+    addresses: Address[],
+): Promise<{ [address: Address]: Hex }> {
+    console.debug(`Fetching bytecode for ${addresses.join(', ')}...`);
+    return Object.assign({},
+        ...await Promise.all(addresses.map(async address => {
+            return { [address]: await client.getBytecode({ address }) };
+        })),
     );
 }
 
-function getPatchedContractOverrides(
-    accounts: { [address: string]: string },
-    patchOpts: PatchOptions,
-): { [address: string]: { code: string } } {
-    return Object.assign(
-        {},
-        ...Object.entries(accounts).map(
-            ([a, c]) => ({ [a]: { code: patchBytecode(c, patchOpts) } }),
-        ),
-    );
-}
-
-async function getAccessListAsync(eth: FlexEther, txParams: TxParams)
+async function getAccessListAsync(client: PublicClient, txParams: TxParams)
     : Promise<Array<{ address: string }>>
 {
-    const r = await eth.rpc._send('eth_createAccessList', [
-        {
-            to: txParams.to,
-            from: txParams.from,
-            gas: toHex(txParams.gas),
-            gasPrice: toHex(txParams.gasPrice),
-            value: toHex(txParams.value),
-            data: txParams.data,
-        },
-        ...(txParams.block ? [toHex(txParams.block)] : []),
-    ]);
-    return r.accessList;
+    try {
+        const {accessList} = await client.transport.request({
+            method: 'eth_createAccessList',
+            params: [
+                {
+                    to: txParams.to,
+                    from: txParams.from,
+                    gas: toHex(txParams.gas),
+                    gasPrice: toHex(txParams.gasPrice),
+                    value: toHex(txParams.value),
+                    data: txParams.data,
+                },
+                ...(txParams.block ? [toHex(txParams.block)] : []),
+            ]
+        }) as { accessList: Array<{ address: string }> };
+        return accessList;
+    } catch (err) {
+        if (err?.details !== 'Method not found') {
+            throw err;
+        }
+    }
+    return [];
 }
 
 function cleanResultObject(o: any): any {
@@ -200,4 +149,122 @@ function cleanResultObject(o: any): any {
         }));
     }
     return o;
+}
+
+enum CallType {
+    Call = 0,
+    Static = 1,
+    Delegate = 2,
+    Code = 3,
+}
+
+interface RunResult {
+    succesS: boolean;
+    returnData: Hex;
+    spy_calls: Array<{
+        index: bigint;
+        context: Address;
+        callType: CallType;
+        to: Address;
+        value: bigint;
+        gas: bigint;
+        data: Hex;
+        result: Hex;
+        success: boolean;
+        gasUsed: bigint;
+    }>;
+    spy_logs: Array<{
+        index: bigint;
+        context: Address;
+        numTopics: number;
+        topics: Hex[];
+        data: Hex;
+    }>;
+}
+async function buildTrace(opts: {
+    client: PublicClient;
+    tx: TxParams;
+    maxIterations?: number;
+}): Promise<RunResult> {
+    const { client, tx } = opts;
+    const maxIterations = opts.maxIterations ?? 100;
+    const patchOpts: PatchOptions = {
+        hooksAddress: HOOKS_ADDRESS,
+        origin: tx.from,
+        originalStates: {},
+    };
+    const codeByAddress = {} as {
+        [addr: Address]: {
+            original: Hex;
+            patched: Hex;
+            originalHash: Hex;
+            patchedHash: Hex;
+        };
+    };
+    const addCode = (addr: Address, original: Hex, patched?: Hex) => {
+        addr = addr.toLowerCase() as Address;
+        patched = patched ??
+            timeItCumulativeSync('patchBytecode', () => patchBytecode(original, patchOpts));
+        const originalHash = keccak256(original);
+        patchOpts.originalStates[addr] = { code: original, codeHash: originalHash};
+        return codeByAddress[addr] = {
+            original,
+            patched,
+            originalHash,
+            patchedHash: keccak256(patched),
+        };
+    };
+    addCode(tx.from, '0x', ORIGIN_ARTIFACT.deployedBytecode.object as Hex);
+    addCode(RUNNER_ADDRESS, '0x', RUNNER_ARTIFACT.deployedBytecode.object as Hex);
+    addCode(HOOKS_ADDRESS, '0x', HOOKS_ARTIFACT.deployedBytecode.object as Hex);
+    Object.entries(await timeItCumulative(
+        'getBytecodes',
+        getBytecodes(client, await getInitialTransactionAccounts(client, tx)),
+    )).forEach(([addr, code]) => addCode(addr as Address, code));
+    let r: RunResult | null = null;
+    let round = 0;
+    for (; round < maxIterations; ++round) {
+        let unknonwBytecodes: Hex[];
+        [r, unknonwBytecodes] = await timeItCumulative('readContract', client.readContract({
+            abi: RUNNER_ARTIFACT.abi,
+            address: RUNNER_ADDRESS,
+            functionName: 'runIterative',
+            account: tx.from,
+            ...(typeof(tx.block) === 'string'
+                ? ({ blockTag: tx.block })
+                : ({ blockNumber: BigInt(tx.block) })
+            ),
+            args: [
+                {
+                    txOrigin: tx.from,
+                    txTo: tx.to,
+                    txValue: tx.value,
+                    txData: tx.data,
+                    txGas: 100e6,
+                    txGasPrice: tx.gasPrice,
+                },
+                Object.keys(codeByAddress),
+            ],
+            stateOverride: Object.entries(codeByAddress).map(([addr, codes]) => ({
+                address: addr as Address,
+                code: codes.patched,
+            })),
+        })) as [RunResult, Hex[]];
+        if (unknonwBytecodes.length === 0) {
+            break;
+        }
+        {
+            for (const c of r.spy_calls) {
+                const to = c.to.toLowerCase() as Address;
+                if (!(to in codeByAddress)
+                    && c.callType !== CallType.Static
+                    && c.success)
+                {
+                    addCode(to, unknonwBytecodes.pop());
+                }
+            }
+        }
+    }
+    console.debug(`Found all overrides after ${round+1} rounds!`);
+    return r;
 }

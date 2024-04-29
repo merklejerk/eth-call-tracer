@@ -1,4 +1,3 @@
-import * as ethjs from 'ethereumjs-util';
 import path from 'path';
 import fs from 'fs';
 import {
@@ -14,8 +13,9 @@ import {
 } from "./evm-assembler";
 import { createJumpRouterCode } from './jump-router';
 
-import HOOKS_ARTIFACT from '../out/Runner.sol/SpyHooks.json';
+import * as HOOKS_ARTIFACT from '../out/Runner.sol/SpyHooks.json';
 import { createExtCodeCopyRouter, createExtCodeHashRouter, createExtCodeSizeRouter } from './ext-router';
+import { Hex, toBytes, toHex } from 'viem';
 
 export interface PatchOptions {
     hooksAddress: string;
@@ -60,7 +60,7 @@ const RAW_FRAGMENTS = Object.assign(
     ...ALL_FRAGMENT_NAMES.map(n => ({ [n]: loadAsmFragment(n) })),
 );
 
-export function patchBytecode(bytecode: string, opts: PatchOptions): string {
+export function patchBytecode(bytecode: Hex, opts: PatchOptions): Hex {
     if (bytecode === '0x') {
         return bytecode;
     }
@@ -79,7 +79,7 @@ export function patchBytecode(bytecode: string, opts: PatchOptions): string {
             ([n, asm]) => ({ [n]: assemble(asm, env) }),
         ),
     ) as { [k in AllFragments]: Instruction[] };
-    const bytecodeBuf = ethjs.toBuffer(bytecode);
+    const bytecodeBuf = toBytes(bytecode);
     const runtimeCode: Instruction[] = [
         // Prepend a JUMPDEST for the preamble to jump to.
         { opcode: OPCODES.JUMPDEST, label: '::runtime' },
@@ -239,7 +239,7 @@ export function patchBytecode(bytecode: string, opts: PatchOptions): string {
     // Write the preamble.
     serializeCode(outBuf, fragments[PatchFragments.Preamble]);
     // Write the original bytecode right after the preamble.
-    bytecodeBuf.copy(outBuf, getCodeSize(fragments[PatchFragments.Preamble]));
+    outBuf.set(bytecodeBuf, getCodeSize(fragments[PatchFragments.Preamble]));
     // Write the runtime code.
     serializeCode(outBuf, runtimeCode);
     // Write lib fragments.
@@ -250,7 +250,7 @@ export function patchBytecode(bytecode: string, opts: PatchOptions): string {
     for (const router of routers) {
         serializeCode(outBuf, router);
     }
-    return ethjs.bufferToHex(outBuf);
+    return toHex(outBuf);
 }
 
 function loadAsmFragment(name: string): string {
@@ -267,6 +267,6 @@ function findSelector(artifact: any, name: string): string {
     throw new Error(`Couldn't find a selector for ${name}!`);
 }
 
-function stringToBytes32(s: string): Buffer {
-    return ethjs.setLengthRight(Buffer.from(s), 32);
+function stringToBytes32(s: string): Uint8Array {
+    return toBytes(s, { size: 32 });
 }

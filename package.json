@@ -9,17 +9,21 @@
   },
   "scripts": {
     "build": "forge build && tsc -b",
-    "start": "node --enable-source-maps js/ts/run.js"
+    "start": "node --enable-source-maps -r dotenv/config js/ts/run.js",
+    "flame": "0x -- node --enable-source-maps -r dotenv/config js/ts/run.js"
+    
   },
   "author": "",
   "license": "AGPL-3.0",
   "dependencies": {
     "@types/node": "^18.11.2",
     "colors": "^1.4.0",
-    "dotenv": "^16.0.3",
-    "flex-contract": "^2.4.9",
-    "flex-ether": "^1.10.8",
-    "typescript": "^4.8.4",
-    "yargs": "^17.6.0"
+    "dotenv": "^16.4.5",
+    "viem": "^2.9.23",
+    "yargs": "^17.7.2"
+  },
+  "devDependencies": {
+    "@types/yargs": "^17.0.32",
+    "typescript": "^5.4.5"
   }
 }

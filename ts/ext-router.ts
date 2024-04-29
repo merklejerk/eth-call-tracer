@@ -77,7 +77,7 @@ export function createExtCodeHashRouter(
             // :jumpback
             { opcode: OPCODES.POP },
             // hash, :jumpback
-            { opcode: OPCODES.PUSH2, payload: hash },
+            { opcode: OPCODES.PUSH32, payload: hash },
             // :jumpback, hash
             { opcode: OPCODES.SWAP1 },
             // hash
