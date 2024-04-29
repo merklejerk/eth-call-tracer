@@ -21,6 +21,17 @@ export async function timeItCumulative<T>(id: string, promise: Promise<T>): Prom
     return r;
 }
 
+export function timeItCumulativeSync<T>(id: string, cb: () => T): T {
+    const start = Date.now();
+    const r = cb();
+    const c = CUMULATIVE_TIMES[id] = CUMULATIVE_TIMES[id] ?? { totalCalls: 0, totalTime: 0 };
+    ++c.totalCalls;
+    const dt = Date.now() - start;
+    console.debug(`${id} took ${(dt / 1e3).toFixed(2)} seconds`);
+    c.totalTime += dt;
+    return r;
+}
+
 export function printCumulativeTimes(): void {
     console.debug(Object.entries(CUMULATIVE_TIMES)
         .map(([id, { totalCalls, totalTime }]) =>

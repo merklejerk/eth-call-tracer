@@ -9,7 +9,7 @@ import * as ORIGIN_ARTIFACT from '../out/Runner.sol/Origin.json';
 import * as HOOKS_ARTIFACT from '../out/Runner.sol/SpyHooks.json';
 
 import { patchBytecode, PatchOptions } from './patch';
-import { timeItAsync, timeItCumulative } from './util';
+import { timeItAsync, timeItCumulative, timeItCumulativeSync } from './util';
 import { mainnet } from 'viem/chains';
 
 const NULL_ADDRESS = '0x0000000000000000000000000000000000000000';
@@ -203,7 +203,8 @@ async function buildTrace(opts: {
     };
     const addCode = (addr: Address, original: Hex, patched?: Hex) => {
         addr = addr.toLowerCase() as Address;
-        patched = patched ?? patchBytecode(original, patchOpts);
+        patched = patched ??
+            timeItCumulativeSync('patchBytecode', () => patchBytecode(original, patchOpts));
         const originalHash = keccak256(original);
         patchOpts.originalStates[addr] = { code: original, codeHash: originalHash};
         return codeByAddress[addr] = {
