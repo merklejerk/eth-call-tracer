@@ -102,6 +102,7 @@ async function getBytecodes(
     client: PublicClient,
     addresses: Address[],
 ): Promise<{ [address: Address]: Hex }> {
+    console.debug(`Fetching bytecode for ${addresses.join(', ')}...`);
     return Object.assign({},
         ...await Promise.all(addresses.map(async address => {
             return { [address]: await client.getBytecode({ address }) };
@@ -187,47 +188,46 @@ async function buildTrace(opts: {
 }): Promise<RunResult> {
     const { client, tx } = opts;
     const maxIterations = opts.maxIterations ?? 100;
-    const toCachedCode = (original: Hex, patched: Hex) => ({
-        original,
-        patched,
-        originalHash: keccak256(original),
-        patchedHash: keccak256(patched),
-    });
-    const codeByAddress = {
-        [tx.from.toLowerCase()]: toCachedCode('0x', ORIGIN_ARTIFACT.deployedBytecode.object as Hex),
-        [RUNNER_ADDRESS]: toCachedCode('0x', RUNNER_ARTIFACT.deployedBytecode.object as Hex),
-        [HOOKS_ADDRESS]: toCachedCode('0x', HOOKS_ARTIFACT.deployedBytecode.object as Hex),
+    const patchOpts: PatchOptions = {
+        hooksAddress: HOOKS_ADDRESS,
+        origin: tx.from,
+        originalStates: {},
     };
-    let unknowns = await getInitialTransactionAccounts(client, tx);
+    const codeByAddress = {} as {
+        [addr: Address]: {
+            original: Hex;
+            patched: Hex;
+            originalHash: Hex;
+            patchedHash: Hex;
+        };
+    };
+    const addCode = (addr: Address, original: Hex, patched?: Hex) => {
+        addr = addr.toLowerCase() as Address;
+        patched = patched ?? patchBytecode(original, patchOpts);
+        const originalHash = keccak256(original);
+        patchOpts.originalStates[addr] = { code: original, codeHash: originalHash};
+        return codeByAddress[addr] = {
+            original,
+            patched,
+            originalHash,
+            patchedHash: keccak256(patched),
+        };
+    };
+    addCode(tx.from, '0x', ORIGIN_ARTIFACT.deployedBytecode.object as Hex);
+    addCode(RUNNER_ADDRESS, '0x', RUNNER_ARTIFACT.deployedBytecode.object as Hex);
+    addCode(HOOKS_ADDRESS, '0x', HOOKS_ARTIFACT.deployedBytecode.object as Hex);
+    Object.entries(await timeItCumulative(
+        'getBytecodes',
+        getBytecodes(client, await getInitialTransactionAccounts(client, tx)),
+    )).forEach(([addr, code]) => addCode(addr as Address, code));
     let r: RunResult | null = null;
     let round = 0;
     for (; round < maxIterations; ++round) {
-        Object.assign(
-            codeByAddress,
-            ...Object.entries(await timeItCumulative('getBytecodes', getBytecodes(client, unknowns)))
-                .map(([address, code]) => ({
-                    [address.toLowerCase()]: toCachedCode(code, '0x')
-                })),
-        );
-        const patchOpts: PatchOptions = {
-            hooksAddress: HOOKS_ADDRESS,
-            origin: tx.from,
-            originalStates: Object.assign(
-                {},
-                ...Object.entries(codeByAddress)
-                    .map(([ addr, { original, originalHash } ]) => ({
-                        [addr]: { code: original, codeHash: originalHash },
-                    })),
-            ),
-        }
-        for (const addr of unknowns) {
-            codeByAddress[addr].patched = patchBytecode(codeByAddress[addr].original, patchOpts);
-            codeByAddress[addr].patchedHash = keccak256(codeByAddress[addr].patched);
-        }
-        r = await timeItCumulative('readContract', client.readContract({
+        let unknonwBytecodes: Hex[];
+        [r, unknonwBytecodes] = await timeItCumulative('readContract', client.readContract({
             abi: RUNNER_ARTIFACT.abi,
             address: RUNNER_ADDRESS,
-            functionName: 'run',
+            functionName: 'runIterative',
             account: tx.from,
             ...(typeof(tx.block) === 'string'
                 ? ({ blockTag: tx.block })
@@ -242,24 +242,26 @@ async function buildTrace(opts: {
                     txGas: 100e6,
                     txGasPrice: tx.gasPrice,
                 },
+                Object.keys(codeByAddress),
             ],
             stateOverride: Object.entries(codeByAddress).map(([addr, codes]) => ({
                 address: addr as Address,
                 code: codes.patched,
             })),
-        })) as RunResult;
-        unknowns = [];
-        for (const c of r.spy_calls) {
-            const to = c.to.toLowerCase() as Address;
-            if (!(to in codeByAddress)
-                && c.callType !== CallType.Static
-                && c.success)
-            {
-                unknowns.push(to);
-            }
-        }
-        if (unknowns.length === 0) {
+        })) as [RunResult, Hex[]];
+        if (unknonwBytecodes.length === 0) {
             break;
+        }
+        {
+            for (const c of r.spy_calls) {
+                const to = c.to.toLowerCase() as Address;
+                if (!(to in codeByAddress)
+                    && c.callType !== CallType.Static
+                    && c.success)
+                {
+                    addCode(to, unknonwBytecodes.pop());
+                }
+            }
         }
     }
     console.debug(`Found all overrides after ${round+1} rounds!`);
