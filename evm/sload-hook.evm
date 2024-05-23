@@ -1,0 +1,30 @@
+::sload-hook
+// jumpback, slot
+JUMPDEST
+// slot, jumpback
+SWAP1
+// Encode a delegatecall to handleSpySload()
+// selector(4), slot, jumpback
+PUSH4 $HANDLE_SPY_SLOAD_SELECTOR
+// 224, selector(4), slot, jumpback
+PUSH1 224
+// selector(32), slot, jumpback
+SHL
+// ptr, selector, slot, jumpback
+PUSH2 $SCRATCH_MEM_LOC
+// slot, jumpback
+MSTORE
+// 0x04, slot, jumpback
+PUSH1 0x04
+// scratch, 0x04, slot, jumpback
+PUSH2 $SCRATCH_MEM_LOC
+// scratch+0x04, slot, jumpback
+ADD
+// jumpback
+MSTORE
+// argSize, jumpback
+PUSH1 0x24
+// ::checked-delegatecall, argSize, jumpback
+PUSH3 ::checked-delegatecall
+// argSize, jumpback
+JUMP

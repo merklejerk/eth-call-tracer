@@ -1,0 +1,8 @@
+// jumpback, slot, ...
+PUSH3 :jumpback
+// logHookOffset, jumpback, slot
+PUSH3 ::sload-hook
+// jumpback, slot, ...
+JUMP
+:jumpback
+JUMPDEST
