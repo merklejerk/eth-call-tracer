@@ -22,9 +22,32 @@ PUSH2 $SCRATCH_MEM_LOC
 ADD
 // jumpback
 MSTORE
-// argSize, jumpback
+// :after-hook, jumpback
+PUSH3 :after-hook
+// argSize, :after-hook, jumpback
 PUSH1 0x24
-// ::checked-delegatecall, argSize, jumpback
+// ::checked-delegatecall, argSize, :after-hook, jumpback
 PUSH3 ::checked-delegatecall
-// argSize, jumpback
+// argSize, :after-hook, jumpback
 JUMP
+
+:after-hook
+// jumpback
+JUMPDEST
+// scratch, jumpback
+PUSH2 $SCRATCH_MEM_LOC
+// 0x20, scratch, jumpback
+PUSH1 0x20
+// 0, 0x20, scratch, jumpback
+PUSH1 0
+// scratch, 0, 0x20, scratch, jumpback
+DUP3
+// scratch, jumpback
+RETURNDATACOPY
+// slot_data, jumpback
+MLOAD
+// jumpback, slot_data
+SWAP1
+// slot_data
+JUMP
+

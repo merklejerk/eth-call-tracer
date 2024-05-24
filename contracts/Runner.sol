@@ -245,8 +245,7 @@ contract SpyHooks {
 
     function handleSpySload(
         uint256 slot
-    ) external payable returns (uint256 gasUsed) {
-        bytes32 value;
+    ) external payable returns (bytes32 value, uint256 gasUsed) {
         assembly {
             gasUsed := gas()
             value := sload(slot)
