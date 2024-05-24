@@ -80,6 +80,10 @@ contract Spy {
         spy_sstores.push(spied);
     }
 
+    function onSpySload(Spy_SLOAD memory spied) external virtual {
+        spy_sloads.push(spied);
+    }
+
     function onSpyLog(Spy_LOG memory spied) external virtual {
         spy_logs.push(spied);
     }
@@ -235,6 +239,26 @@ contract SpyHooks {
             oldValue: oldValue,
             value: value
         }));
+    }
+
+    uint256 constant SLOAD_GAS_OVERHEAD = 13; // TODO
+
+    function handleSpySload(
+        uint256 slot
+    ) external payable returns (bytes32 value, uint256 gasUsed) {
+        assembly {
+            gasUsed := gas()
+            value := sload(slot)
+            gasUsed := sub(sub(gas(), gasUsed), SLOAD_GAS_OVERHEAD)
+        }
+        if (!_isStaticCallContext()) {
+            SPY.onSpySload(Spy.Spy_SLOAD({
+                index: SPY.consumeNextHookIndex(),
+                context: address(this),
+                slot: slot,
+                value: value
+            }));
+        }
     }
 }
 

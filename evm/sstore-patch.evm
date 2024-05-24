@@ -1,5 +1,5 @@
 PUSH3 :jumpback
-// logHookOffset, jumpback, numTopics, ...
+// sstoreHookOffset, jumpback, slot, value ...
 PUSH3 ::sstore-hook
 JUMP
 :jumpback

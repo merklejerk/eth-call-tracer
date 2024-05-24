@@ -71,7 +71,7 @@ async function run(argv): Promise<void> {
     if (!argv.quiet) {
         console.debug(tx);
     }
-    const r = await timeItAsync(buildTrace({ client, tx }), 'buildTrace()');
+    const r = await timeItAsync(buildTrace({ client, tx, logsOnly: argv.logsOnly }), 'buildTrace()');
     console.log(r);
     process.exit();
     // console.log(JSON.stringify(cleanResultObject(r), null, '\t'));
@@ -130,9 +130,7 @@ async function getAccessListAsync(client: PublicClient, txParams: TxParams)
         }) as { accessList: Array<{ address: string }> };
         return accessList;
     } catch (err) {
-        if (err?.details !== 'Method not found') {
-            throw err;
-        }
+        console.warn(`eth_createAccessList not supported on current network: ${err.details}`);
     }
     return [];
 }
@@ -180,11 +178,26 @@ interface RunResult {
         topics: Hex[];
         data: Hex;
     }>;
+    spy_sloads: Array<{
+        index: bigint;
+        context: Address;
+        slot: bigint;
+        value: Hex;
+    }>;
+    spy_sstores: Array<{
+        index: bigint;
+        context: Address;
+        slot: bigint;
+        oldValue: Hex;
+        value: Hex;
+    }>;
 }
+
 async function buildTrace(opts: {
     client: PublicClient;
     tx: TxParams;
     maxIterations?: number;
+    logsOnly?: boolean;
 }): Promise<RunResult> {
     const { client, tx } = opts;
     const maxIterations = opts.maxIterations ?? 100;
@@ -192,6 +205,7 @@ async function buildTrace(opts: {
         hooksAddress: HOOKS_ADDRESS,
         origin: tx.from,
         originalStates: {},
+        logsOnly: opts.logsOnly, 
     };
     const codeByAddress = {} as {
         [addr: Address]: {

@@ -30,7 +30,8 @@ enum PatchFragments {
     JumpPatch = 'jump-patch',
     JumpIPatch = 'jumpi-patch',
     LogPatch = 'log-patch',
-    SStorePatch = 'sstore-patch',
+    SstorePatch = 'sstore-patch',
+    SloadPatch = 'sload-patch',
     CodeCopyPatch = 'codecopy-patch',
     StaticcallPatch = 'staticcall-patch',
     CallPatch = 'call-patch',
@@ -44,6 +45,7 @@ enum LibFragments {
     CheckedDegateCall = 'checked-delegatecall',
     LogHook = 'log-hook',
     SstoreHook = 'sstore-hook',
+    SloadHook = 'sload-hook',
     CallHook = 'call-hook',
 }
 type AllFragments = PatchFragments | LibFragments;
@@ -53,6 +55,7 @@ const ALL_FRAGMENT_NAMES = [
     ...LIB_FRAGMENT_NAMES,
 ];
 const HANDLE_SPY_SSTORE_SELECTOR = findSelector(HOOKS_ARTIFACT, 'handleSpySstore');
+const HANDLE_SPY_SLOAD_SELECTOR = findSelector(HOOKS_ARTIFACT, 'handleSpySload');
 const HANDLE_SPY_LOG_SELECTOR = findSelector(HOOKS_ARTIFACT, 'handleSpyLog');
 const HANDLE_SPY_CALL_SELECTOR = findSelector(HOOKS_ARTIFACT, 'handleSpyCall');
 const RAW_FRAGMENTS = Object.assign(
@@ -68,6 +71,7 @@ export function patchBytecode(bytecode: Hex, opts: PatchOptions): Hex {
         'HOOKS_CONTRACT_ADDRESS': opts.hooksAddress,
         'SCRATCH_MEM_LOC': SCRATCH_MEM_LOC,
         'HANDLE_SPY_SSTORE_SELECTOR': HANDLE_SPY_SSTORE_SELECTOR,
+        'HANDLE_SPY_SLOAD_SELECTOR': HANDLE_SPY_SLOAD_SELECTOR,
         'HANDLE_SPY_LOG_SELECTOR': HANDLE_SPY_LOG_SELECTOR,
         'HANDLE_SPY_CALL_SELECTOR': HANDLE_SPY_CALL_SELECTOR,
         'PREAMBLE_SIZE': 5,
@@ -163,7 +167,11 @@ export function patchBytecode(bytecode: Hex, opts: PatchOptions): Hex {
                             break;
                         case OPCODES.SSTORE:
                             // Replace with sstore patch.
-                            runtimeCode.push(...dupeCode(fragments[PatchFragments.SStorePatch]));
+                            runtimeCode.push(...dupeCode(fragments[PatchFragments.SstorePatch]));
+                            break;
+                        case OPCODES.SLOAD:
+                            // Replace with sload patch.
+                            runtimeCode.push(...dupeCode(fragments[PatchFragments.SloadPatch]));
                             break;
                         default:
                             // Copy unmolested.
